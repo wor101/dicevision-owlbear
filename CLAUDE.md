@@ -44,7 +44,8 @@ dicevision-owlbear/
 │   └── theme.ts              # OBR theme → CSS variables
 ├── tests/*.test.ts           # Vitest, Node environment
 ├── .github/workflows/tests.yml   # lint + typecheck, test + build (required checks)
-├── .github/workflows/deploy.yml  # main → GitHub Pages
+├── .github/workflows/deploy.yml  # main → rsync dist/ to the droplet
+├── scripts/deploy.sh             # the same by hand: build + rsync + live-version check
 ├── .github/dependabot.yml        # weekly npm + Actions, 7-day cooldown
 ├── vite.config.ts, tsconfig.json, eslint.config.js, package.json
 ├── README.md, CLAUDE.md, LICENSE (MIT)
@@ -162,13 +163,14 @@ Not covered by unit tests, check in a room (design doc §9): background page lif
 ## CI, Deploy and Branch Rules
 
 - **Tests** workflow on every PR and push to `main`: `lint` (ESLint + typecheck) and `test` (Vitest, build, check `dist/` has what the manifest points at). Make both required checks in a "Main" ruleset like the Talespire and Foundry repos (PR + 1 approval, no force-push; admins bypass).
-- **Deploy** workflow on push to `main`: build → GitHub Pages (Settings → Pages → Source: GitHub Actions). Custom domain `owlbear.dirtyowlbear.com` (a CNAME record at the DNS host, Squarespace, pointing at `wor101.github.io`; set it in Settings → Pages so Pages issues the certificate). Pages sends no `X-Frame-Options`; the main domain does, which is why the extension isn't served from `dicevision.dirtyowlbear.com`.
+- **Deploy** workflow on push to `main`: build → `scripts/deploy.sh --no-build`, which rsyncs `dist/` to the DiceVision droplet. Secrets: `DEPLOY_TARGET` (`user@host:/var/www/rodeo`), `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`; without `DEPLOY_TARGET` the workflow builds and stops. By hand: `scripts/deploy.sh` (default target `root@rodeo.dirtyowlbear.com:/var/www/rodeo`; it checks the live manifest version afterwards).
+- **Hosting:** `https://rodeo.dirtyowlbear.com`, an nginx vhost on the droplet tracked as `nginx/rodeo.conf` in the dice-vision repo (setup: its `docs/backend/DEPLOYMENT.md` → "Owlbear Rodeo extension"). It sends `Content-Security-Policy: frame-ancestors` for the Owlbear origins and `Access-Control-Allow-Origin: *`, no `X-Frame-Options`; `dicevision.dirtyowlbear.com` sends `X-Frame-Options: SAMEORIGIN`, which is why the extension has its own host. The subdomain is `rodeo`, not `owlbear`, so it doesn't read as part of the DirtyOwlbear name. Hashed `/assets/` are cached for a year, `manifest.json` / HTML / `store.md` are `no-cache`. nginx needs no reload per release.
 - **Versioning:** bump `version` in both `package.json` and `public/manifest.json` (a test checks they match); OBR shows the manifest version. Tag `vX.Y.Z` on `main` for the record; deployment is per push, not per tag.
 - **Dependabot:** weekly npm + Actions, 7-day cooldown. ESLint 10 and typescript-eslint 8 are in use here (no `eslint-plugin-react`, which is what blocks ESLint 10 in the main repo).
 
 ## Store Submission (Phase 3)
 
-Host `public/store.md` (it ships in `dist/`), fork `owlbear-rodeo/extensions`, add `"dicevision": "https://owlbear.dirtyowlbear.com/store.md"` to `extensions.json` in a single-commit PR to `main`. Verification later: comment `/verify dicevision` on that PR and pass the checklist (both themes, mobile, Chrome/Firefox/Safari, works in private browsing, manifest on a domain we control, support contact, no companion extension required). `store.md` references `store-header.png`, rendered with the icon by a scratch script (regenerate if the branding changes).
+Host `public/store.md` (it ships in `dist/`), fork `owlbear-rodeo/extensions`, add `"dicevision": "https://rodeo.dirtyowlbear.com/store.md"` to `extensions.json` in a single-commit PR to `main`. Verification later: comment `/verify dicevision` on that PR and pass the checklist (both themes, mobile, Chrome/Firefox/Safari, works in private browsing, manifest on a domain we control, support contact, no companion extension required). `store.md` references `store-header.png`, rendered with the icon by a scratch script (regenerate if the branding changes).
 
 ## Key Files in the Main Repo
 

@@ -1,7 +1,7 @@
 # Node
 node_modules/
 
-# Build output (GitHub Pages deploys it from CI)
+# Build output (scripts/deploy.sh rsyncs it to the droplet)
 dist/
 
 # OS / editor

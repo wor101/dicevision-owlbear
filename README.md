@@ -14,7 +14,7 @@ An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://git
 1. In Owlbear Rodeo, open your **profile** → **Add Extension**.
 2. Paste the manifest URL:
    ```
-   https://owlbear.dirtyowlbear.com/manifest.json
+   https://rodeo.dirtyowlbear.com/manifest.json
    ```
 3. Enable **DiceVision** for a room (when creating it, or from the room's extension menu). Everyone in the room then gets the extension; each player with physical dice connects their own DiceVision session.
 
@@ -57,7 +57,9 @@ To try a local build in Owlbear Rodeo, add `http://localhost:5173/manifest.json`
 
 ## Hosting
 
-The built site (`dist/`) is deployed to GitHub Pages by `.github/workflows/deploy.yml` on every push to `main`. Pages sends no `X-Frame-Options`, so Owlbear Rodeo can frame it. The manifest, popover and background page use site-relative paths, so the site works at the repo's `github.io` address as well as the custom domain `owlbear.dirtyowlbear.com` (Settings → Pages → Custom domain, plus a CNAME record at the DNS host).
+The built site (`dist/`) is served by the DiceVision droplet at `https://rodeo.dirtyowlbear.com` (nginx vhost `nginx/rodeo.conf` in the [dice-vision](https://github.com/wor101/dice-vision) repo, web root `/var/www/rodeo`). That host sends `Content-Security-Policy: frame-ancestors` for the Owlbear Rodeo origins instead of the main site's `X-Frame-Options`, and `Access-Control-Allow-Origin: *` so Owlbear Rodeo can fetch the manifest.
+
+`scripts/deploy.sh` builds and rsyncs `dist/` there (`DEPLOY_TARGET=user@host:/var/www/rodeo` to override the destination); `.github/workflows/deploy.yml` does the same on every push to `main` when the `DEPLOY_TARGET`, `DEPLOY_SSH_KEY` and `DEPLOY_KNOWN_HOSTS` secrets are set. The manifest, popover and background page use site-relative paths, so the site works at any host. Droplet setup (DNS, certificate, vhost) is in the dice-vision repo's `docs/backend/DEPLOYMENT.md`.
 
 ## Related
 

@@ -2,11 +2,11 @@
 title: DiceVision
 description: Roll real dice on camera and see the results in Owlbear Rodeo
 author: DirtyOwlbear Studios
-image: https://owlbear.dirtyowlbear.com/store-header.png
-icon: https://owlbear.dirtyowlbear.com/icon.png
+image: https://rodeo.dirtyowlbear.com/store-header.png
+icon: https://rodeo.dirtyowlbear.com/icon.png
 tags:
   - dice
-manifest: https://owlbear.dirtyowlbear.com/manifest.json
+manifest: https://rodeo.dirtyowlbear.com/manifest.json
 learn-more: https://dicevision.dirtyowlbear.com
 ---
 

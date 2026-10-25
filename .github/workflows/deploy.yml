@@ -1,10 +1,13 @@
-# Builds the extension and publishes dist/ to GitHub Pages on every push to
-# main. Pages sends no X-Frame-Options header, so Owlbear Rodeo can load the
-# pages in its iframes. With the repo's Pages set to a custom domain
-# (owlbear.dirtyowlbear.com, CNAME at the DNS host), the manifest URL is
-# https://owlbear.dirtyowlbear.com/manifest.json.
+# Builds the extension and rsyncs dist/ to the DiceVision droplet, which serves
+# it at https://rodeo.dirtyowlbear.com (nginx/rodeo.conf in wor101/dice-vision).
+# Runs on every push to main; the same thing by hand is `scripts/deploy.sh`.
 #
-# One-time setup in the repo: Settings → Pages → Source: GitHub Actions.
+# Repository secrets (Settings → Secrets and variables → Actions):
+#   DEPLOY_TARGET       rsync destination, e.g. root@rodeo.dirtyowlbear.com:/var/www/rodeo
+#   DEPLOY_SSH_KEY      private key whose public half is in that user's authorized_keys
+#   DEPLOY_KNOWN_HOSTS  output of `ssh-keyscan rodeo.dirtyowlbear.com` (pins the host key)
+# Without DEPLOY_TARGET the workflow builds and stops, so a fork or a fresh clone
+# of the repo doesn't fail on main.
 name: Deploy
 
 on:
@@ -14,15 +17,17 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
+# One deploy at a time, never cancelled midway through an rsync.
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,18 +43,25 @@ jobs:
 
       - run: npm run build
 
-      - uses: actions/configure-pages@v5
+      - name: Install the deploy key
+        if: env.DEPLOY_TARGET != ''
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
 
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
+      - name: Deploy dist/ to the droplet
+        if: env.DEPLOY_TARGET != ''
+        env:
+          DEPLOY_SSH_OPTS: -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes
+        run: scripts/deploy.sh --no-build
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: No DEPLOY_TARGET secret
+        if: env.DEPLOY_TARGET == ''
+        run: echo "::notice::DEPLOY_TARGET is not set; built but not deployed."

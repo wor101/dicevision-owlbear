@@ -1,0 +1,55 @@
+# Builds the extension and publishes dist/ to GitHub Pages on every push to
+# main. Pages sends no X-Frame-Options header, so Owlbear Rodeo can load the
+# pages in its iframes. With the repo's Pages set to a custom domain
+# (owlbear.dirtyowlbear.com, CNAME at the DNS host), the manifest URL is
+# https://owlbear.dirtyowlbear.com/manifest.json.
+#
+# One-time setup in the repo: Settings → Pages → Source: GitHub Actions.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

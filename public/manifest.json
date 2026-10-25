@@ -1,0 +1,23 @@
+{
+  "name": "DiceVision",
+  "version": "0.1.0",
+  "manifest_version": 1,
+  "author": "DirtyOwlbear Studios",
+  "homepage_url": "https://github.com/wor101/dicevision-owlbear",
+  "icon": "/icon.png",
+  "description": "Roll real dice on camera and see the results in Owlbear Rodeo.",
+  "action": {
+    "title": "DiceVision",
+    "icon": "/icon.svg",
+    "popover": "/action.html",
+    "width": 400,
+    "height": 560
+  },
+  "background_url": "/background.html",
+  "permissions": [
+    {
+      "name": "clipboard-read",
+      "reason": "Paste your DiceVision session code"
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <title>DiceVision</title>
+    <link rel="stylesheet" href="/src/action.css" />
+  </head>
+  <body>
+    <main id="app">
+      <header class="top">
+        <div class="brand">
+          <img src="/icon.svg" alt="" width="22" height="22" />
+          <h1>DiceVision</h1>
+        </div>
+        <div class="status">
+          <span id="status-dot" class="dot" data-state="disconnected" aria-hidden="true"></span>
+          <span id="status-text" role="status">Not connected</span>
+        </div>
+      </header>
+
+      <section class="card" aria-labelledby="session-heading">
+        <h2 id="session-heading" class="visually-hidden">Session</h2>
+        <label for="code">Session code</label>
+        <div class="row">
+          <input
+            id="code"
+            type="text"
+            inputmode="text"
+            autocomplete="off"
+            autocapitalize="characters"
+            spellcheck="false"
+            maxlength="9"
+            placeholder="XKRM-4N7B"
+            aria-describedby="code-hint"
+          />
+          <button id="paste" type="button" class="ghost" title="Paste a session code">Paste</button>
+        </div>
+        <div class="row">
+          <button id="connect" type="button" class="primary">Connect</button>
+          <button id="disconnect" type="button" class="danger" hidden>Disconnect</button>
+          <label class="check"><input id="auto-connect" type="checkbox" checked /> Connect automatically</label>
+        </div>
+        <p id="code-hint" class="hint">
+          From the DiceVision dashboard: Settings → VTT Bridge, bridge <b>Owlbear Rodeo</b>. The dash is optional.
+        </p>
+        <p id="storage-note" class="hint" hidden>This browser doesn't keep the extension's settings; you'll re-enter the code next time.</p>
+      </section>
+
+      <section class="card" aria-labelledby="rolling-heading">
+        <h2 id="rolling-heading" class="visually-hidden">Rolling</h2>
+        <div class="row">
+          <button id="roll-once" type="button" class="primary" disabled>Roll once</button>
+          <label class="check"><input id="continuous" type="checkbox" disabled /> Continuous</label>
+        </div>
+        <div class="row">
+          <label for="visibility">Share rolls with</label>
+          <select id="visibility">
+            <option value="everyone">Everyone</option>
+            <option value="gm">GM only</option>
+            <option value="self">Only me</option>
+          </select>
+        </div>
+      </section>
+
+      <p id="notice" class="notice" data-tone="info" hidden><span></span><button id="notice-close" type="button" aria-label="Dismiss">×</button></p>
+
+      <section class="card log-card" aria-labelledby="log-heading">
+        <div class="row between">
+          <h2 id="log-heading">Recent rolls</h2>
+          <button id="clear-log" type="button" class="ghost" hidden>Clear</button>
+        </div>
+        <ol id="log" class="log"></ol>
+        <p id="log-empty" class="hint">Rolls you and your party make with real dice show up here.</p>
+      </section>
+
+      <footer>
+        <a href="https://dicevision.dirtyowlbear.com" target="_blank" rel="noopener">dicevision.dirtyowlbear.com</a>
+        <span id="player"></span>
+      </footer>
+    </main>
+    <script type="module" src="/src/action.ts"></script>
+  </body>
+</html>

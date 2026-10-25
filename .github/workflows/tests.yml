@@ -1,0 +1,57 @@
+# Lint, test and build every PR and every push to main. The "lint" and "test"
+# jobs are meant to be required checks in the main branch ruleset, so keep
+# their names.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      # The deploy workflow only runs on main, so check the build here
+      - name: Build
+        run: npm run build
+
+      - name: Check the built site has what the manifest points at
+        run: |
+          for f in manifest.json action.html background.html icon.svg icon.png store.md; do
+            test -f "dist/$f" || { echo "::error::dist/$f missing"; exit 1; }
+          done

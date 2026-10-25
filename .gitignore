@@ -1,0 +1,17 @@
+# Node
+node_modules/
+
+# Build output (GitHub Pages deploys it from CI)
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.idea/
+
+# Local env
+.env
+.env.*

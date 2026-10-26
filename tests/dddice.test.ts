@@ -47,11 +47,15 @@ describe("dddiceDie", () => {
     expect(dddiceDie(die("d8", "8"), "t")).toEqual({ type: "d8", theme: "t", value: 8 });
   });
 
-  it("maps the d10's 0 face and the d100 tens die the way dddice counts them", () => {
+  it("maps the d10's 0 face and the percentile tens die (a d10 with a two-digit face) the way dddice counts them", () => {
     expect(dddiceDie(die("d10", "0"), "t")).toEqual({ type: "d10", theme: "t", value: 10, value_to_display: "0" });
     expect(dddiceDie(die("d10", "7"), "t")).toEqual({ type: "d10", theme: "t", value: 7 });
+    // As DiceVision sends them: type d10, face "80", value 80 (the room check's "cannot roll value 80")
+    expect(dddiceDie(die("d10", "80"), "t")).toEqual({ type: "d10x", theme: "t", value: 8, value_to_display: "80" });
+    expect(dddiceDie(die("d10", "00"), "t")).toEqual({ type: "d10x", theme: "t", value: 10, value_to_display: "00" });
+    expect(dddiceDie(die("d10", "10"), "t")).toEqual({ type: "d10x", theme: "t", value: 1, value_to_display: "10" });
+    // A d100 type, should a client ever send one, is the same die
     expect(dddiceDie(die("d100", "70"), "t")).toEqual({ type: "d10x", theme: "t", value: 7, value_to_display: "70" });
-    expect(dddiceDie(die("d100", "00"), "t")).toEqual({ type: "d10x", theme: "t", value: 10, value_to_display: "00" });
   });
 
   it("shows an icon by its label and keeps the number it stands for", () => {
@@ -62,7 +66,7 @@ describe("dddiceDie", () => {
       value_to_display: "Demon",
       label: "Demon",
     });
-    expect(dddiceDie(die("d100", "90", { id: "skull", label: "Skull" }), "t")).toEqual({
+    expect(dddiceDie(die("d10", "90", { id: "skull", label: "Skull" }), "t")).toEqual({
       type: "d10x",
       theme: "t",
       value: 9,
@@ -72,7 +76,7 @@ describe("dddiceDie", () => {
   });
 
   it("refuses what dddice can't show, so the roll is reported instead of sent as nonsense", () => {
-    expect(() => dddiceDie(die("d100", "5"), "t")).toThrow('"5" isn\'t a tens face for a d100');
+    expect(() => dddiceDie(die("d100", "5"), "t")).toThrow('"5" isn\'t a tens face');
     expect(() => dddiceDie({ type: "d?", value: 3, face: "3", readable: true, icon: null }, "t")).toThrow("dddice has no d?");
   });
 });

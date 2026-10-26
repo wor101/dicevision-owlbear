@@ -67,6 +67,14 @@ interface DeliverySubject {
   playerName: string;
 }
 
+const PLAYER_UNKNOWN = "Your Owlbear Rodeo player couldn't be read; reload the room.";
+
+/** An error's message as a sentence to append to a failure notice ("...failed. <reason>"). */
+function reasonFrom(err: unknown): string | undefined {
+  if (!(err instanceof Error) || !err.message.trim()) return undefined;
+  return `${err.message.trim().replace(/[.!]+$/, "")}.`;
+}
+
 export interface ControllerState {
   connection: ConnectionState;
   sessionCode: string | null;
@@ -80,8 +88,8 @@ export interface ControllerState {
   player: PlayerInfo;
   log: LogEntry[];
   notice: Notice | null;
-  /** What the dddice extension has set up in this room for us (the key itself stays private) */
-  dddice: { room: string | null; hasKey: boolean };
+  /** What the dddice extension has set up in this room for us (the key itself stays private); roomRead false = the room couldn't be read */
+  dddice: { room: string | null; hasKey: boolean; roomRead: boolean };
 }
 
 export type Command =
@@ -116,6 +124,8 @@ export class Controller {
   private settings: Settings;
   private roomMetadata: Record<string, unknown> = {};
   private dddice: DddiceSetup = { room: null, apiKey: null };
+  /** Whether the room's metadata has been read at least once (a failed start read leaves this false) */
+  private roomRead = false;
   private player: PlayerInfo = { id: "", name: "You", color: null, role: "PLAYER" };
   private rollOncePending = false;
   private noDiceShown = false;
@@ -133,6 +143,7 @@ export class Controller {
     this.client = options.client ?? new BridgeClient();
     this.storage = options.storage === undefined ? availableStorage() : options.storage;
     this.now = options.now ?? (() => new Date());
+    // Wrapped so `this` is never the Controller: a bare fetch throws "Illegal invocation" when called as a method
     this.fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.settings = loadSettings(this.storage);
   }
@@ -154,17 +165,21 @@ export class Controller {
         this.emit();
       }),
     );
-    try {
-      this.readRoom(await this.host.getRoomMetadata());
-    } catch (err) {
-      console.warn("[DiceVision] Couldn't read the room metadata:", err);
-    }
+    // Subscribe before the first read so a write during the read isn't missed; a
+    // change that arrives meanwhile is newer than the snapshot and wins.
     this.cleanups.push(
       this.host.onRoomMetadataChange((metadata) => {
         this.readRoom(metadata);
         this.emit();
       }),
     );
+    try {
+      const snapshot = await this.host.getRoomMetadata();
+      if (!this.roomRead) this.readRoom(snapshot);
+    } catch (err) {
+      console.warn("[DiceVision] Couldn't read the room metadata:", err);
+      if (!this.roomRead) this.setNotice("Couldn't read this room's shared data; dddice forwarding won't work until you reload the room.", "warn");
+    }
     if (this.settings.sessionCode && this.settings.autoConnect) {
       this.client.connect(this.settings.sessionCode);
     }
@@ -193,13 +208,14 @@ export class Controller {
       player: this.player,
       log: this.log,
       notice: this.notice,
-      dddice: { room: this.dddice.room, hasKey: this.dddice.apiKey !== null },
+      dddice: { room: this.dddice.room, hasKey: this.dddice.apiKey !== null, roomRead: this.roomRead },
     };
   }
 
   /** Pick up what the dddice extension wrote to the room (its room slug, our API key). */
   private readRoom(metadata: Record<string, unknown>): void {
     this.roomMetadata = metadata;
+    this.roomRead = true;
     this.dddice = readDddiceSetup(metadata, this.player.id);
   }
 
@@ -417,22 +433,35 @@ export class Controller {
 
   /**
    * Roll the same faces as 3D dice in the room's dddice room, as this
-   * player. Only Everyone rolls: dddice has no per-viewer visibility we can
-   * map a GM only roll onto without extra round trips. Needs the dddice
-   * extension's room slug and our key from the room metadata.
+   * player. Called by forwardRoll for our usable Everyone rolls only:
+   * addressing a GM only roll would need dddice's participant ids, an extra
+   * round trip we don't make. Needs our player id (the key is filed under
+   * it), the dddice extension's room slug and our key from the room
+   * metadata; each missing piece is reported with what to do about it.
    */
   private rollInDddice(roll: Roll, subject: DeliverySubject): void {
     const { room, apiKey } = this.dddice;
-    if (!room || !apiKey) {
-      const why = !room
-        ? "No dddice room in this Owlbear room yet: open the dddice extension and pick a room."
-        : "dddice has no key for you yet: open the dddice extension in this room once.";
-      this.deliveryFailed(subject, "dddice", new Error("dddice not set up"), why);
+    const why = !this.player.id
+      ? PLAYER_UNKNOWN
+      : !this.roomRead
+        ? "This room's shared data couldn't be read at start; reload the room."
+        : !room
+          ? "No dddice room in this Owlbear room yet: open the dddice extension and pick a room."
+          : !apiKey
+            ? "dddice has no key for you yet: open the dddice extension in this room once."
+            : null;
+    if (why || !room || !apiKey) {
+      this.deliveryFailed(subject, "dddice", new Error("dddice not set up"), why ?? undefined);
       return;
     }
-    void createDddiceRoll(apiKey, dddiceRollRequest(roll, room, this.settings.dddiceTheme), this.fetch).catch((err) =>
-      this.deliveryFailed(subject, "dddice", err, err instanceof Error ? `${err.message}.` : undefined),
-    );
+    let request;
+    try {
+      request = dddiceRollRequest(roll, room, this.settings.dddiceTheme);
+    } catch (err) {
+      this.deliveryFailed(subject, "dddice", err, reasonFrom(err));
+      return;
+    }
+    void createDddiceRoll(apiKey, request, this.fetch).catch((err) => this.deliveryFailed(subject, "dddice", err, reasonFrom(err)));
   }
 
   /**
@@ -459,12 +488,12 @@ export class Controller {
    * so the caller reports a failure with this reason instead of sending it.
    */
   private unaddressed(visibility: Visibility): string | null {
-    return !this.player.id && visibility !== "everyone" ? "Your Owlbear Rodeo player couldn't be read; reload the room." : null;
+    return !this.player.id && visibility !== "everyone" ? PLAYER_UNKNOWN : null;
   }
 
   /**
    * One destination refused a roll that went out to the table: the room
-   * share, Grimoire, or this client's Rumble! line. Says so on the log entry
+   * share, Grimoire, this client's Rumble! line, or dddice. Says so on the log entry
    * (which outlives the notice) and as a notification while the popover is
    * closed; for our own roll also in the notice, which another player's roll
    * must not take over. Several failures on one roll add up ("the room and

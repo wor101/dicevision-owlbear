@@ -6,7 +6,8 @@
  * works without it, the user just re-enters the code.
  *
  * Nothing goes in OBR room metadata (a session code is per player and would
- * be visible to the whole room).
+ * be visible to the whole room); the controller reads room metadata for
+ * dddice's setup but writes nothing there.
  */
 
 export type Visibility = "everyone" | "gm" | "self";

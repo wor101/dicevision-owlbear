@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createDddiceRoll,
   DDDICE_API,
@@ -7,6 +7,7 @@ import {
   dddiceKeyFor,
   dddiceRollRequest,
   readDddiceSetup,
+  type DddiceRollRequest,
   type FetchLike,
 } from "../src/dddice";
 import type { PhysicalDie, Roll } from "../src/dice";
@@ -25,8 +26,17 @@ describe("readDddiceSetup", () => {
     expect(readDddiceSetup(room, "p1")).toEqual({ room: "AbC123", apiKey: "k1" });
     expect(readDddiceSetup(room, "p3")).toEqual({ room: "AbC123", apiKey: null });
     expect(readDddiceSetup(room, "")).toEqual({ room: "AbC123", apiKey: null }); // no id, no key lookup
-    expect(readDddiceSetup({ [DDDICE_ROOM_KEY]: 5, [dddiceKeyFor("p1")]: "" }, "p1")).toEqual({ room: null, apiKey: null });
     expect(readDddiceSetup({}, "p1")).toEqual({ room: null, apiKey: null });
+  });
+
+  it("warns, without the value, when dddice's format isn't what we expect", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(readDddiceSetup({ [DDDICE_ROOM_KEY]: { slug: "AbC123" }, [dddiceKeyFor("p1")]: "" }, "p1")).toEqual({ room: null, apiKey: null });
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0][0]).toMatch(/dddice wrote a object as its room slug/);
+    expect(warn.mock.calls[1][0]).toMatch(/dddice wrote a string as its player key/);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("AbC123");
+    warn.mockRestore();
   });
 });
 
@@ -52,6 +62,18 @@ describe("dddiceDie", () => {
       value_to_display: "Demon",
       label: "Demon",
     });
+    expect(dddiceDie(die("d100", "90", { id: "skull", label: "Skull" }), "t")).toEqual({
+      type: "d10x",
+      theme: "t",
+      value: 9,
+      value_to_display: "Skull",
+      label: "Skull",
+    });
+  });
+
+  it("refuses what dddice can't show, so the roll is reported instead of sent as nonsense", () => {
+    expect(() => dddiceDie(die("d100", "5"), "t")).toThrow('"5" isn\'t a tens face for a d100');
+    expect(() => dddiceDie({ type: "d?", value: 3, face: "3", readable: true, icon: null }, "t")).toThrow("dddice has no d?");
   });
 });
 
@@ -76,7 +98,7 @@ describe("dddiceRollRequest", () => {
 });
 
 describe("createDddiceRoll", () => {
-  const body = { dice: [{ type: "d20", theme: "t", value: 1 }], room: "r", label: "DiceVision" };
+  const body: DddiceRollRequest = { dice: [{ type: "d20", theme: "t", value: 1 }], room: "r", label: "DiceVision" };
 
   it("posts with the bearer key and resolves on a 2xx", async () => {
     const calls: Parameters<FetchLike>[] = [];
@@ -99,5 +121,34 @@ describe("createDddiceRoll", () => {
     );
     await expect(createDddiceRoll("k", body, refuse(500, "<html>boom</html>"))).rejects.toThrow("dddice answered 500: <html>boom</html>");
     await expect(createDddiceRoll("k", body, refuse(502, ""))).rejects.toThrow("dddice answered 502");
+  });
+
+  it("digs the useful line out of a validation error, however long the body", async () => {
+    const laravel = {
+      message: "The given data was invalid.",
+      errors: { "dice.0.theme": ["The selected dice.0.theme is invalid."], "dice.1.value": ["x".repeat(300)] },
+    };
+    const refuse: FetchLike = async () => ({ ok: false, status: 422, text: async () => JSON.stringify(laravel) });
+    await expect(createDddiceRoll("k", body, refuse)).rejects.toThrow(
+      "dddice answered 422: The given data was invalid. The selected dice.0.theme is invalid.",
+    );
+    const unreadable: FetchLike = async () => ({
+      ok: false,
+      status: 500,
+      text: async () => {
+        throw new Error("gone");
+      },
+    });
+    await expect(createDddiceRoll("k", body, unreadable)).rejects.toThrow("dddice answered 500");
+  });
+
+  it("explains a network failure in plain words and keeps the cause", async () => {
+    const offline: FetchLike = async () => {
+      throw new TypeError("Failed to fetch");
+    };
+    const err = await createDddiceRoll("k", body, offline).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("Couldn't reach dddice.com (offline, or a content blocker is in the way)");
+    expect(((err as Error).cause as Error).message).toBe("Failed to fetch");
   });
 });

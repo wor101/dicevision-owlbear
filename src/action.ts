@@ -62,10 +62,12 @@ function statusLabel(state: ControllerState): string {
 }
 
 function dddiceStatus(state: ControllerState): string {
-  if (!state.player.id) return "dddice setup is read from the room once Owlbear Rodeo reports your player.";
+  if (!state.dddice.roomRead) return "This room's shared data couldn't be read, so dddice can't be found. Reload the room.";
+  if (!state.player.id) return "Your dddice key can be looked up once Owlbear Rodeo reports your player.";
   if (!state.dddice.room) return "No dddice room here yet. Open the dddice extension in this room and pick a room.";
-  if (!state.dddice.hasKey) return `dddice room ${state.dddice.room} found, but no key for you yet. Open the dddice extension once (an account or a guest both work).`;
-  return `Rolling in dddice room ${state.dddice.room} as you.`;
+  if (!state.dddice.hasKey) return `dddice room ${state.dddice.room} found, but no key for you yet. Open the dddice extension once so it stores your key.`;
+  const only = state.settings.visibility === "everyone" ? "" : " (Everyone rolls only)";
+  return `Rolling in dddice room ${state.dddice.room} as you${only}.`;
 }
 
 function timeLabel(iso: string): string {

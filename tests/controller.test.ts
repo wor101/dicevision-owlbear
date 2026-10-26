@@ -42,6 +42,7 @@ interface Failing {
   metadata?: boolean;
   channels?: string[];
   player?: boolean;
+  room?: boolean;
 }
 
 /** A recording Host: notifications, badge, broadcasts, player metadata, room metadata, and a way to deliver incoming ones. */
@@ -53,13 +54,17 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {},
   const metadataWrites: Record<string, unknown>[] = [];
   const subscribers = new Map<string, (data: unknown) => void>();
   const roomListeners = new Set<(metadata: Record<string, unknown>) => void>();
+  const playerListeners = new Set<(player: PlayerInfo) => void>();
   const host: Host = {
     available: true,
     getPlayer: async () => {
       if (failing.player) throw new Error("no player");
       return player;
     },
-    onPlayerChange: () => () => {},
+    onPlayerChange: (callback) => {
+      playerListeners.add(callback);
+      return () => playerListeners.delete(callback);
+    },
     notify: async (message, variant) => void notifications.push({ message, variant }),
     setBadge: async (text) => void badges.push(text),
     isActionOpen: async () => actionOpen,
@@ -76,7 +81,10 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {},
       Object.assign(metadata, patch);
       metadataWrites.push(patch);
     },
-    getRoomMetadata: async () => room,
+    getRoomMetadata: async () => {
+      if (failing.room) throw new Error("room refused");
+      return room;
+    },
     onRoomMetadataChange: (callback) => {
       roomListeners.add(callback);
       return () => roomListeners.delete(callback);
@@ -93,6 +101,10 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {},
     /** The room metadata changed (the dddice extension wrote something) */
     roomChanged: (next: Record<string, unknown>) => {
       for (const l of roomListeners) l(next);
+    },
+    /** Owlbear reported the player (late, or changed) */
+    playerChanged: (next: PlayerInfo) => {
+      for (const l of playerListeners) l(next);
     },
   };
 }
@@ -645,30 +657,79 @@ describe("Controller: sharing", () => {
 describe("Controller: dddice", () => {
   const dddiceRoom = { [DDDICE_ROOM_KEY]: "AbC123", [dddiceKeyFor("p1")]: "key-will", [dddiceKeyFor("p2")]: "key-ana" };
 
+  /** A connected controller with dddice forwarding on, ready to receive rolls. */
+  async function dddiceSetup(opts: Parameters<typeof setup>[0] = {}) {
+    const s = await setup(opts);
+    s.controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    s.controller.handle({ cmd: "setForward", target: "dddice", on: true });
+    s.controller.setContinuous(true);
+    return s;
+  }
+  const rollOf = (dice: unknown[], total: number, game?: unknown) => FakeSocket.last.receive({ type: "roll", data: { dice, total, game } });
+
   it("reads the dddice room and our own key from the room metadata, and follows changes", async () => {
-    const { state, roomChanged } = await setup({ room: dddiceRoom });
-    expect(state().dddice).toEqual({ room: "AbC123", hasKey: true });
+    const { states, roomChanged } = await setup({ room: dddiceRoom });
+    const last = () => states.at(-1)!.dddice; // what the popover saw, not just the controller's own view
+    expect(last()).toEqual({ room: "AbC123", hasKey: true, roomRead: true });
     roomChanged({ [DDDICE_ROOM_KEY]: "AbC123", [dddiceKeyFor("p2")]: "key-ana" });
-    expect(state().dddice).toEqual({ room: "AbC123", hasKey: false }); // someone else's key isn't ours
+    expect(last()).toEqual({ room: "AbC123", hasKey: false, roomRead: true }); // someone else's key isn't ours
     roomChanged({});
-    expect(state().dddice).toEqual({ room: null, hasKey: false });
+    expect(last()).toEqual({ room: null, hasKey: false, roomRead: true });
+  });
+
+  it("looks our key up again once Owlbear reports our player", async () => {
+    const api = fakeFetch();
+    const { controller, states, playerChanged } = await dddiceSetup({ failing: { player: true }, room: dddiceRoom, fetch: api.fetch });
+    expect(states.at(-1)!.dddice).toEqual({ room: "AbC123", hasKey: false, roomRead: true });
+    rollOf([d20("4")], 4);
+    await flush();
+    expect(api.requests).toHaveLength(0);
+    expect(states.at(-1)!.notice?.text).toBe("Rolled, but sending it to dddice failed. Your Owlbear Rodeo player couldn't be read; reload the room.");
+
+    playerChanged(will);
+    expect(states.at(-1)!.dddice).toEqual({ room: "AbC123", hasKey: true, roomRead: true });
+    controller.handle({ cmd: "clearNotice" });
+    rollOf([d20("4")], 4);
+    await flush();
+    expect(api.requests).toHaveLength(1);
+    expect(api.requests[0].init.headers.Authorization).toBe("Bearer key-will");
+  });
+
+  it("survives a room that can't be read at start, says so, and recovers on the next change", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const api = fakeFetch();
+    const { state, states, roomChanged } = await setup({
+      failing: { room: true },
+      storage: memoryStorage(JSON.stringify({ sessionCode: "XKRM4N7B", autoConnect: true, forward: { dddice: true } })),
+      fetch: api.fetch,
+    });
+    warn.mockRestore();
+    expect(state().connection).toBe("connecting"); // auto-connect still ran
+    expect(state().dddice).toEqual({ room: null, hasKey: false, roomRead: false });
+    expect(state().notice?.text).toMatch(/Couldn't read this room's shared data/);
+    roomChanged(dddiceRoom); // the listener was registered despite the failed read
+    expect(states.at(-1)!.dddice).toEqual({ room: "AbC123", hasKey: true, roomRead: true });
+  });
+
+  it("explains a roll that can't go out because the room couldn't be read", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const api = fakeFetch();
+    const { controller, state } = await dddiceSetup({ failing: { room: true }, fetch: api.fetch });
+    warn.mockRestore();
+    controller.handle({ cmd: "clearNotice" });
+    rollOf([d20("4")], 4);
+    await flush();
+    expect(api.requests).toHaveLength(0);
+    expect(state().notice?.text).toBe("Rolled, but sending it to dddice failed. This room's shared data couldn't be read at start; reload the room.");
   });
 
   it("rolls an Everyone roll in dddice as this player, with the chosen theme", async () => {
     const api = fakeFetch();
-    const { controller, state, metadataWrites } = await setup({ room: dddiceRoom, fetch: api.fetch });
-    controller.connect("XKRM4N7B");
-    FakeSocket.last.confirm();
-    controller.handle({ cmd: "setForward", target: "dddice", on: true });
+    const { controller, state, metadataWrites } = await dddiceSetup({ room: dddiceRoom, fetch: api.fetch });
     controller.handle({ cmd: "setDddiceTheme", theme: "dddice-red" });
-    controller.setContinuous(true);
-    FakeSocket.last.receive({
-      type: "roll",
-      data: {
-        dice: [d20("17"), { type: "d100", value: 70, face: "70", readable: true }],
-        total: 87,
-        game: { tags: [{ die_index: 0, tone: "good", label: "Critical!" }] },
-      },
+    rollOf([d20("17"), { type: "d100", value: 70, face: "70", readable: true }], 87, {
+      tags: [{ die_index: 0, tone: "good", label: "Critical!" }],
     });
     await flush();
     expect(api.requests).toHaveLength(1);
@@ -685,49 +746,109 @@ describe("Controller: dddice", () => {
     });
     expect(state().log[0].note).toBeNull();
     expect(metadataWrites).toHaveLength(0); // Rumble! stayed off
+    expect(JSON.stringify(state())).not.toContain("key-will"); // the key never reaches the popover
+
+    // An unreadable roll goes nowhere
+    rollOf([{ type: "d8", value: -1, face: "-1", readable: false }], 0);
+    await flush();
+    expect(api.requests).toHaveLength(1);
 
     // GM only: not sent to dddice (and not reported either; the hint says so)
     controller.setVisibility("gm");
-    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("3")], total: 3 } });
+    rollOf([d20("3")], 3);
     await flush();
     expect(api.requests).toHaveLength(1);
     expect(state().notice).toBeNull();
   });
 
-  it("reports a missing dddice setup with what to do, and a refused roll with dddice's message", async () => {
-    const noRoom = await setup({ fetch: fakeFetch().fetch });
-    noRoom.controller.connect("XKRM4N7B");
-    FakeSocket.last.confirm();
-    noRoom.controller.handle({ cmd: "setForward", target: "dddice", on: true });
-    noRoom.controller.setContinuous(true);
-    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("8")], total: 8 } });
+  it("uses the theme saved from an earlier visit, and the default without one", async () => {
+    const saved = fakeFetch();
+    const a = await dddiceSetup({ room: dddiceRoom, fetch: saved.fetch, storage: memoryStorage(JSON.stringify({ dddiceTheme: "dddice-red" })) });
+    void a;
+    rollOf([d20("1")], 1);
     await flush();
-    expect(noRoom.state().notice?.text).toBe(
+    expect((JSON.parse(saved.requests[0].init.body) as DddiceRollRequest).dice[0].theme).toBe("dddice-red");
+
+    const fresh = fakeFetch();
+    await dddiceSetup({ room: dddiceRoom, fetch: fresh.fetch });
+    rollOf([d20("1")], 1);
+    await flush();
+    expect((JSON.parse(fresh.requests[0].init.body) as DddiceRollRequest).dice[0].theme).toBe("dddice-bees");
+  });
+
+  it("never posts another player's shared roll to dddice (the roller's client already did)", async () => {
+    const api = fakeFetch();
+    const { deliver, state } = await dddiceSetup({ room: dddiceRoom, fetch: api.fetch });
+    deliver({
+      v: 1,
+      playerId: "p2",
+      playerName: "Ana",
+      visibility: "everyone",
+      roll: { dice: [{ type: "d20", value: 17, face: "17", readable: true }], total: 17 },
+      sentAt: "t",
+      rumble: false,
+    });
+    await flush();
+    expect(api.requests).toHaveLength(0);
+    expect(state().log[0].note).toBeNull();
+  });
+
+  it("reports a missing dddice room with what to do", async () => {
+    const { state } = await dddiceSetup({ fetch: fakeFetch().fetch });
+    rollOf([d20("8")], 8);
+    await flush();
+    expect(state().notice?.text).toBe(
       "Rolled, but sending it to dddice failed. No dddice room in this Owlbear room yet: open the dddice extension and pick a room.",
     );
+  });
 
-    const noKey = await setup({ room: { [DDDICE_ROOM_KEY]: "AbC123" }, fetch: fakeFetch().fetch });
-    noKey.controller.connect("XKRM4N7B");
-    FakeSocket.last.confirm();
-    noKey.controller.handle({ cmd: "setForward", target: "dddice", on: true });
-    noKey.controller.setContinuous(true);
-    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("8")], total: 8 } });
+  it("reports a missing key with what to do", async () => {
+    const { state } = await dddiceSetup({ room: { [DDDICE_ROOM_KEY]: "AbC123" }, fetch: fakeFetch().fetch });
+    rollOf([d20("8")], 8);
     await flush();
-    expect(noKey.state().notice?.text).toMatch(/dddice has no key for you yet/);
+    expect(state().notice?.text).toBe("Rolled, but sending it to dddice failed. dddice has no key for you yet: open the dddice extension in this room once.");
+  });
 
+  it("reports a refused roll with dddice's message, once punctuated", async () => {
     const refused = fakeFetch({ ok: false, status: 422, body: JSON.stringify({ type: "error", data: { message: "The selected theme is invalid." } }) });
-    const bad = await setup({ room: dddiceRoom, fetch: refused.fetch });
-    bad.controller.connect("XKRM4N7B");
-    FakeSocket.last.confirm();
-    bad.controller.handle({ cmd: "setForward", target: "dddice", on: true });
-    bad.controller.setContinuous(true);
-    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("8")], total: 8 } });
+    const { state } = await dddiceSetup({ room: dddiceRoom, fetch: refused.fetch });
+    rollOf([d20("8")], 8);
     await flush();
-    expect(bad.state().notice).toEqual({
-      text: "Rolled, but sending it to dddice failed. dddice answered 422: The selected theme is invalid..",
+    expect(state().notice).toEqual({
+      text: "Rolled, but sending it to dddice failed. dddice answered 422: The selected theme is invalid.",
       tone: "warn",
     });
-    expect(bad.state().log[0].note).toMatch(/^Couldn't send it to dddice\./);
+    expect(state().log[0].note).toBe("Couldn't send it to dddice. dddice answered 422: The selected theme is invalid.");
+    expect(JSON.stringify(state())).not.toContain("key-will");
+  });
+
+  it("reports a network failure in plain words, and a bare rejection without a reason", async () => {
+    const offline: FetchLike = async () => {
+      throw new TypeError("Failed to fetch");
+    };
+    const a = await dddiceSetup({ room: dddiceRoom, fetch: offline });
+    rollOf([d20("8")], 8);
+    await flush();
+    expect(a.state().notice?.text).toBe(
+      "Rolled, but sending it to dddice failed. Couldn't reach dddice.com (offline, or a content blocker is in the way).",
+    );
+
+    const weird: FetchLike = async () => {
+      throw "boom";
+    };
+    const b = await dddiceSetup({ room: dddiceRoom, fetch: weird });
+    rollOf([d20("8")], 8);
+    await flush();
+    expect(b.state().notice?.text).toBe("Rolled, but sending it to dddice failed. Couldn't reach dddice.com (offline, or a content blocker is in the way).");
+  });
+
+  it("reports a die dddice can't show instead of sending it", async () => {
+    const api = fakeFetch();
+    const { state } = await dddiceSetup({ room: dddiceRoom, fetch: api.fetch });
+    rollOf([{ type: "d100", value: 5, face: "5", readable: true }], 5);
+    await flush();
+    expect(api.requests).toHaveLength(0);
+    expect(state().log[0].note).toBe('Couldn\'t send it to dddice. "5" isn\'t a tens face for a d100.');
   });
 });
 

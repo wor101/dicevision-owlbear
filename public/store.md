@@ -28,7 +28,7 @@ Choose who sees your rolls: **Everyone**, **GM only**, or **Only me**. Rolls are
 
 **Other extensions**
 
-Turn on **Also send to** and each roll also goes to Game Master's Grimoire's roll log and/or Rumble!'s chat, if your room has them. GM only and Only me rolls stay private there too (in Rumble!, they are whispered to you only).
+Turn on **Also send to** and each roll also goes to Game Master's Grimoire's roll log and/or Rumble!'s chat, if your room has them. GM only and Only me rolls stay private there too.
 
 **What it reads**
 

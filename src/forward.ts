@@ -14,8 +14,14 @@
  *   its own entry locally; we have no entry of our own there, so we send to
  *   ALL and every client's Grimoire adds it once.
  * - Rumble! (Battle-System chat): a line is a write to the player's own
- *   metadata under `com.battle-system.friends/metadata_chatlog`; Rumble
- *   shows it to everyone (`targetId: "0000"`) or to one player.
+ *   metadata under `com.battle-system.friends/metadata_chatlog`. Rumble!
+ *   shows that line on the writing client only (checked in a room, 0.2.0:
+ *   the roller saw it, nobody else did), which is why Pixels Dice writes it
+ *   on every client that receives its broadcast. We do the same: the roller
+ *   writes its own line, and every other client that shows the shared roll
+ *   writes one too (share.ts carries the roller's choice as `rumble`).
+ *   `targetId` only picks Rumble!'s header: "0000" reads as a party
+ *   message, the client's own player id as a private one ("to You").
  *
  * No OBR or DOM, tested in Node (only the uuid fallback is non-deterministic).
  */
@@ -116,22 +122,24 @@ export function grimoireMessage(roll: Roll, player: PlayerInfo, visibility: Visi
 }
 
 /**
- * The roll as a Rumble! chat line, as a player-metadata patch. Rumble!
- * whispers to one player at most, so anything not shared with everyone goes
- * to the roller alone.
+ * The roll as a Rumble! chat line for this client's own chat, as a
+ * player-metadata patch. `rollerName` is who rolled (us or another player);
+ * `selfId` is this client's player id, the target of a roll that isn't for
+ * everyone (Rumble! then shows it as a private line).
  */
 export function rumbleChatPatch(
   roll: Roll,
-  player: PlayerInfo,
+  rollerName: string,
   visibility: Visibility,
+  selfId: string,
   at: string,
 ): Record<typeof RUMBLE_CHAT_KEY, RumbleChatLine> {
   return {
     [RUMBLE_CHAT_KEY]: {
-      chatlog: describeRoll(roll, player.name),
+      chatlog: describeRoll(roll, rollerName),
       created: at,
       sender: FORWARD_LABEL,
-      targetId: visibility === "everyone" ? RUMBLE_EVERYONE : player.id,
+      targetId: visibility === "everyone" ? RUMBLE_EVERYONE : selfId,
     },
   };
 }

@@ -177,9 +177,18 @@ h2 {
   justify-content: space-between;
 }
 
-label {
+label,
+.field-label {
   font-size: 13px;
   color: var(--text-2);
+}
+
+.forward {
+  gap: 6px 14px;
+}
+
+.forward .field-label {
+  flex-basis: 100%;
 }
 
 .check {

@@ -4,7 +4,7 @@
 
 An Owlbear Rodeo (OBR) extension that connects to DiceVision's WebSocket bridge and shows physical dice rolls to the room. OBR has no dice, chat or roll API of its own, so the extension displays rolls itself (its own roll log, OBR notifications, the action badge) and shares them with the other clients over `OBR.broadcast`. There is no roll to intercept (nothing like the Foundry module's Replace mode).
 
-**Status:** 0.1.0, code complete for a first version, **not yet run in a live room**. The design and the open questions are in the main repo: `wor101/dice-vision` → `docs/planning/OWLBEAR_RODEO_INTEGRATION.md` (§9 lists the spike to run first; §6 is what this code implements).
+**Status:** 0.2.0. Live at `https://rodeo.dirtyowlbear.com`; the design doc's spike (§9) passed in live rooms on 0.1.x (Chrome + Firefox, desktop + phone, both themes, second player via incognito). 0.2.0 adds Phase 2, forwarding to Game Master's Grimoire and Rumble! (`src/forward.ts`), **not yet checked in a room with those extensions**. The design is in the main repo: `wor101/dice-vision` → `docs/planning/OWLBEAR_RODEO_INTEGRATION.md` (§6 is what this code implements; §10 the phases).
 
 ## Architecture
 
@@ -15,9 +15,9 @@ DiceVision Camera → Backend → WebSocket Bridge → background.html (Controll
 ```
 
 - **`background.html`** (`src/background.ts`): OBR loads it hidden for the whole room visit, on every client with the extension enabled. It runs the `Controller`, which owns the bridge client, the waiting logic, the roll log, sharing and notifications, and serves it to the popover over a `BroadcastChannel` (`src/local-bus.ts`). Rolls shared by other players reach this page even if the popover is never opened.
-- **`action.html`** (`src/action.ts`): the popover behind the DiceVision button in OBR's top-left bar. UI only: session code, Connect, Roll once, Continuous, Share rolls with (Everyone / GM only / Only me), Connect automatically, notice line, Recent rolls. It asks the background page for its state (`hello`) and, if nothing answers within 1.5 s, runs its own `Controller` (local dev of the page alone, or a host that didn't load the background page).
+- **`action.html`** (`src/action.ts`): the popover behind the DiceVision button in OBR's top-left bar. UI only: session code, Connect, Roll once, Continuous, Share rolls with (Everyone / GM only / Only me), Also send to (Game Master's Grimoire / Rumble! chat), Connect automatically, notice line, Recent rolls. It asks the background page for its state (`hello`) and, if nothing answers within 1.5 s, runs its own `Controller` (local dev of the page alone, or a host that didn't load the background page).
 - **`src/controller.ts`**: the brain. `Command`s in, `ControllerState` out (every change). Talks to OBR through the `Host` interface (`src/host.ts`: `obrHost()` for the SDK, `standaloneHost()` outside OBR, a recording fake in tests).
-- **Pure modules** (tested in Node, no OBR, no DOM): `src/dice.ts` (read a roll, display faces, describe it), `src/bridge-client.ts` (WebSocket state machine, injectable socket), `src/share.ts` (broadcast payload, parsing, visibility rule), `src/settings.ts` (best-effort `localStorage`), `src/session-code.ts`.
+- **Pure modules** (tested in Node, no OBR, no DOM): `src/dice.ts` (read a roll, display faces, describe it), `src/bridge-client.ts` (WebSocket state machine, injectable socket), `src/share.ts` (broadcast payload, parsing, visibility rule), `src/forward.ts` (the roll as a Game Master's Grimoire log entry and as a Rumble! chat line), `src/settings.ts` (best-effort `localStorage`), `src/session-code.ts`.
 - **`src/theme.ts`**: maps `OBR.theme` onto the CSS variables `src/action.css` uses; `prefers-color-scheme` defaults outside OBR.
 
 ## Project Structure
@@ -39,6 +39,7 @@ dicevision-owlbear/
 │   ├── bridge-client.ts      # WebSocket client
 │   ├── dice.ts               # Read a DiceVision roll
 │   ├── share.ts              # Party broadcast payload + visibility
+│   ├── forward.ts            # Grimoire roll-event + Rumble! chat line (opt-in)
 │   ├── settings.ts           # localStorage settings (best-effort)
 │   ├── session-code.ts       # Normalize / format XKRM-4N7B
 │   └── theme.ts              # OBR theme → CSS variables
@@ -108,10 +109,23 @@ Close code `4001` = invalid or expired session: stop, don't reconnect. The serve
 
 - A roll is *wanted* in continuous mode, or after Roll once until a usable roll arrives. `syncWaiting()` registers when wanted and not registered, cancels when registered and not wanted.
 - The dashboard forwards a roll only while it believes an app is waiting and drops that flag with each roll, so after **every** roll: re-send `waiting` if still wanted, else `cancel` if registered (a reloaded dashboard shouldn't find us waiting). Any `cancel` clears the dashboard's waiting state for all apps on the session: give each app its own session code.
-- A roll with an unreadable die (`readable: false`) or no dice is logged locally as not shared (`note`), the notice says which die ("Couldn't read 1d8. Roll again. Still waiting."), and we keep waiting.
+- A roll with an unreadable die (`readable: false`) or no dice is logged locally as not shared (`note`; the same field later carries a delivery failure), the notice says which die ("Couldn't read 1d8. Roll again. Still waiting."), and we keep waiting.
 - `no_dice`: one notification per Roll once (`noDiceShown`), nothing in continuous mode, nothing when another app asked (we aren't registered).
 - `cancelled` (another app, or another client on a shared code) re-arms us if a roll is still wanted.
 - Reconnect: 2, 4, 8, 16, 30 s, then `gave-up` (notice + notification). A confirmed session resets the count.
+- **Forwarding** (`settings.forward`, both off by default): a usable roll of *ours* is also sent to Game Master's Grimoire and/or Rumble! after it is shared; rolls received from other players never are (each client forwards its own). Unusable rolls are never forwarded.
+- **Delivery failures** (the room share, Grimoire, Rumble!) all go through `deliveryFailed()`: a `warn` notice ("Rolled, but sending it to the room and Rumble! failed."), the same text as the log entry's `note` (which outlives the notice), and a WARNING notification while the popover is closed. The roll, badge and waiting logic are unaffected. A private (GM only / Only me) roll with no player id (`getPlayer()` failed at start, which is itself a notice) is reported as failed rather than sent to nobody.
+
+## Forwarding to other extensions (Phase 2)
+
+Neither extension has a published API; the shapes in `src/forward.ts` were read from their source and from the Pixels Dice extension's bundle (2026-10-26), so a format change on their side breaks silently. Test in a room with the extension enabled.
+
+| Extension | Mechanism | Visibility mapping |
+|-----------|-----------|--------------------|
+| **Game Master's Grimoire** ([kamejosh/owlbear-hp-tracker](https://github.com/kamejosh/owlbear-hp-tracker)) | `OBR.broadcast.sendMessage("com.bitperfect-software.hp-tracker.roll-event", entry)`; its background page adds the message to its roll log as is, and pops its roll log open for a few seconds on each client that adds it (the fields of its `RollLogEntryType` we fill: `uuid, created_at, equation, label, is_hidden, total_value (a string; Grimoire also allows an array), username, values (string[]), owlbear_user_id, participantUsername`; dedup by `uuid`, we use DiceVision's `roll_id`). Grimoire broadcasts REMOTE and adds its own entry locally; we have no entry there, so we send **ALL** and each client's Grimoire adds it once. | Everyone → roll channel, ALL. GM only → `...roll-event-whisper`, ALL (Grimoire shows it when `owlbear_user_id` is the viewer or the viewer is GM). Only me → whisper channel, LOCAL. |
+| **Rumble!** (Battle-System, closed source; shape confirmed by two other senders) | `OBR.player.setMetadata({"com.battle-system.friends/metadata_chatlog": {chatlog, created, sender: "DiceVision", targetId}})` on the roller's own client. | Everyone → `targetId: "0000"`. GM only / Only me → `targetId: <own player id>` (Rumble whispers to one player; the GM doesn't get it). |
+
+Pixels Dice does the same two writes, but with Grimoire destination LOCAL, because every Pixels client receives the Pixels broadcast and forwards to its own Grimoire; we forward from the roller's client only. Not done: the Initiative Tracker (Pixels writes a d20 to a token the roller owns that has no initiative yet, `rodeo.owlbear.initiative-tracker/metadata` `{active, count}`), design doc §6.6.
 
 ## Owlbear Rodeo API Used
 
@@ -119,24 +133,25 @@ Close code `4001` = invalid or expired session: stop, don't reconnect. The serve
 |-----|-----|
 | `OBR.onReady`, `OBR.isAvailable` | Start; `isAvailable` false means a plain browser tab (standalone host) |
 | `OBR.player.id/getName/getColor/getRole/onChange` | Who's rolling; role decides whether a GM-only roll is shown |
-| `OBR.broadcast.sendMessage(channel, data, {destination: "REMOTE"})` / `onMessage` | Share rolls on `com.dirtyowlbear.dicevision/roll` (≤16 KB; a roll is a few hundred bytes). REMOTE, so our own roll (already logged) never echoes back; a message from our own `playerId` is ignored anyway |
-| `OBR.notification.show(msg, variant)` | Connected (SUCCESS), invalid session (ERROR), lost connection (WARNING), other players' rolls (INFO), and our own roll / unreadable die / no dice only while the popover is closed (`OBR.action.isOpen()`) |
+| `OBR.broadcast.sendMessage(channel, data, {destination})` / `onMessage` | Share rolls on `com.dirtyowlbear.dicevision/roll` (≤16 KB; a roll is a few hundred bytes) with REMOTE, so our own roll (already logged) never echoes back; a message from our own `playerId` is ignored anyway. Forwarding sends on Grimoire's channels with ALL or LOCAL (`Host.broadcast` takes the destination explicitly; sharing passes REMOTE) |
+| `OBR.player.setMetadata` | Only for Rumble! forwarding (its chat line lives in the roller's player metadata) |
+| `OBR.notification.show(msg, variant)` | Connected (SUCCESS), invalid session (ERROR), lost connection (WARNING), other players' rolls (INFO), and our own roll / unreadable die / no dice / a delivery failure (WARNING) only while the popover is closed (`OBR.action.isOpen()`) |
 | `OBR.action.setBadgeText` | Our latest total; cleared on disconnect |
 | `OBR.theme.getTheme/onChange` | Popover colours in both modes |
 
-Metadata/broadcast keys are namespaced `com.dirtyowlbear.dicevision/...`. Nothing is written to room or player metadata (a session code is per player and room metadata is shared and limited to 16 kB).
+Our own metadata/broadcast keys are namespaced `com.dirtyowlbear.dicevision/...`. Nothing of ours is written to room or player metadata (a session code is per player and room metadata is shared and limited to 16 kB); the only metadata write is Rumble!'s key, when that forwarding is on.
 
 ## Local Bus (popover ↔ background page)
 
 `BroadcastChannel("com.dirtyowlbear.dicevision/local")`, same-origin iframes in the same OBR tab.
 
-- Popover → background: `{ kind: "cmd", command }` with `command.cmd` one of `hello | connect {code} | disconnect | rollOnce | cancelRollOnce | setContinuous {on} | setVisibility {visibility} | setAutoConnect {on} | clearLog | clearNotice`.
+- Popover → background: `{ kind: "cmd", command }` with `command.cmd` one of `hello | connect {code} | disconnect | rollOnce | cancelRollOnce | setContinuous {on} | setVisibility {visibility} | setAutoConnect {on} | setForward {target, on} | clearLog | clearNotice`.
 - Background → popover: `{ kind: "state", state: ControllerState }` after every change and on `hello`.
 - `connectRemote()` resolves null when no state arrives within 1.5 s; the popover then runs a local `Controller`. If OBR turns out to load the background page lazily (spike §9.1), two controllers could briefly coexist; the state still comes from whichever answers. Revisit after the spike.
 
 ## Settings
 
-`localStorage["com.dirtyowlbear.dicevision/settings"]` = `{ sessionCode, autoConnect, continuous, visibility }`, read and written through `src/settings.ts` with try/catch everywhere (`availableStorage()` probes with a write). Third-party-iframe storage can be partitioned, empty or throwing (Safari, private windows, cookies blocked); `ControllerState.storage` is false then and the popover says settings won't be kept. OBR's verification checklist requires the extension to *work* with storage blocked.
+`localStorage["com.dirtyowlbear.dicevision/settings"]` = `{ sessionCode, autoConnect, continuous, visibility, forward: {grimoire, rumble} }`, read and written through `src/settings.ts` with try/catch everywhere (`availableStorage()` probes with a write). Third-party-iframe storage can be partitioned, empty or throwing (Safari, private windows, cookies blocked); `ControllerState.storage` is false then and the popover says settings won't be kept. OBR's verification checklist requires the extension to *work* with storage blocked.
 
 ## Development Workflow
 
@@ -156,9 +171,9 @@ npm run build      # tsc --noEmit && vite build → dist/
 
 ## Testing
 
-Vitest in Node (`tests/`): `dice`, `session-code`/`bridge-client` (fake socket, fake timers: ping, backoff, 4001, give-up), `share` (round trip, rejection, visibility), `settings`, `controller` (recording Host and fake socket: Roll once / continuous / cancel / unreadable / no_dice / sharing / incoming rolls / log cap / commands), `manifest` (field limits, referenced files exist, version matches `package.json`, store.md front matter).
+Vitest in Node (`tests/`): `dice`, `session-code`/`bridge-client` (fake socket, fake timers: ping, backoff, 4001, give-up), `share` (round trip, rejection, visibility), `forward` (Grimoire entry and channel/destination per visibility, Rumble! line and target), `settings`, `controller` (recording Host and fake socket: Roll once / continuous / cancel / unreadable / no_dice / sharing / forwarding on and off, failure notice / incoming rolls / log cap / commands), `manifest` (field limits, referenced files exist, version matches `package.json`, store.md front matter).
 
-Not covered by unit tests, check in a room (design doc §9): background page lifecycle, BroadcastChannel reach between the two iframes, `OBR.broadcast` reach to clients that never opened the popover, storage in Safari/private windows, the popover at phone width, both themes.
+Not covered by unit tests, check in a room: forwarding into Game Master's Grimoire and Rumble! with each enabled (all three visibilities; still pending as of 0.2.0). Checked in rooms on 0.1.x (design doc §9): background page lifecycle, BroadcastChannel reach between the two iframes, `OBR.broadcast` reach to clients that never opened the popover, the popover at phone width, both themes; storage in Safari/private windows not yet.
 
 ## CI, Deploy and Branch Rules
 

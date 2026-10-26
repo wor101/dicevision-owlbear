@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeClient, type SocketLike } from "../src/bridge-client";
 import { Controller, type ControllerState } from "../src/controller";
-import type { Host, NotificationVariant } from "../src/host";
+import { GRIMOIRE_ROLL_CHANNEL, GRIMOIRE_WHISPER_CHANNEL, RUMBLE_CHAT_KEY, type GrimoireRollEntry, type RumbleChatLine } from "../src/forward";
+import type { BroadcastDestination, Host, NotificationVariant } from "../src/host";
 import { ROLL_CHANNEL, type PlayerInfo, type SharedRoll } from "../src/share";
 import type { StorageLike } from "../src/settings";
 
@@ -35,26 +36,44 @@ class FakeSocket implements SocketLike {
   }
 }
 
-/** A recording Host: notifications, badge, broadcasts, and a way to deliver incoming ones. */
-function fakeHost(player: PlayerInfo, actionOpen = false) {
+/** What a fake Host refuses: player metadata writes, broadcasts on given channels, or reading the player. */
+interface Failing {
+  metadata?: boolean;
+  channels?: string[];
+  player?: boolean;
+}
+
+/** A recording Host: notifications, badge, broadcasts, player metadata, and a way to deliver incoming ones. */
+function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {}) {
   const notifications: { message: string; variant: NotificationVariant }[] = [];
   const badges: (string | undefined)[] = [];
-  const broadcasts: { channel: string; data: unknown }[] = [];
+  const broadcasts: { channel: string; data: unknown; destination: BroadcastDestination }[] = [];
+  const metadata: Record<string, unknown> = {};
   const subscribers = new Map<string, (data: unknown) => void>();
   const host: Host = {
     available: true,
-    getPlayer: async () => player,
+    getPlayer: async () => {
+      if (failing.player) throw new Error("no player");
+      return player;
+    },
     onPlayerChange: () => () => {},
     notify: async (message, variant) => void notifications.push({ message, variant }),
     setBadge: async (text) => void badges.push(text),
     isActionOpen: async () => actionOpen,
-    broadcast: async (channel, data) => void broadcasts.push({ channel, data }),
+    broadcast: async (channel, data, destination) => {
+      if (failing.channels?.includes(channel)) throw new Error(`${channel} refused`);
+      broadcasts.push({ channel, data, destination });
+    },
     onBroadcast: (channel, callback) => {
       subscribers.set(channel, callback);
       return () => subscribers.delete(channel);
     },
+    setPlayerMetadata: async (patch) => {
+      if (failing.metadata) throw new Error("metadata refused");
+      Object.assign(metadata, patch);
+    },
   };
-  return { host, notifications, badges, broadcasts, deliver: (data: unknown) => subscribers.get(ROLL_CHANNEL)?.(data) };
+  return { host, notifications, badges, broadcasts, metadata, deliver: (data: unknown) => subscribers.get(ROLL_CHANNEL)?.(data) };
 }
 
 function memoryStorage(initial?: string): StorageLike {
@@ -67,8 +86,8 @@ const will: PlayerInfo = { id: "p1", name: "Will", color: "#f00", role: "PLAYER"
 const d20 = (face: string, readable = true) => ({ type: "d20", value: readable ? Number(face) : -1, face, readable });
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-async function setup(opts: { storage?: StorageLike | null; actionOpen?: boolean; player?: PlayerInfo } = {}) {
-  const fake = fakeHost(opts.player ?? will, opts.actionOpen ?? false);
+async function setup(opts: { storage?: StorageLike | null; actionOpen?: boolean; player?: PlayerInfo; failing?: Failing } = {}) {
+  const fake = fakeHost(opts.player ?? will, opts.actionOpen ?? false, opts.failing ?? {});
   const client = new BridgeClient({ createSocket: () => new FakeSocket() });
   const controller = new Controller(fake.host, { client, storage: opts.storage === undefined ? memoryStorage() : opts.storage, now: () => new Date("2026-10-25T10:00:00Z") });
   const states: ControllerState[] = [];
@@ -154,6 +173,7 @@ describe("Controller: waiting", () => {
     await flush();
     expect(broadcasts).toHaveLength(1);
     expect(broadcasts[0].channel).toBe(ROLL_CHANNEL);
+    expect(broadcasts[0].destination).toBe("REMOTE");
     expect((broadcasts[0].data as SharedRoll).visibility).toBe("everyone");
     expect(badges.at(-1)).toBe("17");
   });
@@ -307,6 +327,158 @@ describe("Controller: sharing", () => {
     expect(closed.notifications.filter((n) => /You rolled 1d20 \(9\) = 9/.test(n.message))).toHaveLength(1);
   });
 
+  it("forwards nothing to other extensions unless asked", async () => {
+    const { controller, broadcasts, metadata } = await setup();
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    controller.setContinuous(true);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("12")], total: 12 } });
+    await flush();
+    expect(broadcasts.map((b) => b.channel)).toEqual([ROLL_CHANNEL]);
+    expect(metadata).toEqual({});
+  });
+
+  it("forwards a usable roll to Grimoire and Rumble! when turned on, following the visibility", async () => {
+    const { controller, state, broadcasts, metadata } = await setup();
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    controller.handle({ cmd: "setForward", target: "grimoire", on: true });
+    controller.handle({ cmd: "setForward", target: "rumble", on: true });
+    expect(state().settings.forward).toEqual({ grimoire: true, rumble: true });
+    controller.setContinuous(true);
+
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("17"), d20("3")], total: 20, roll_id: "r1" } });
+    await flush();
+    const grimoire = broadcasts.find((b) => b.channel === GRIMOIRE_ROLL_CHANNEL);
+    expect(grimoire?.destination).toBe("ALL");
+    expect(grimoire?.data as GrimoireRollEntry).toMatchObject({
+      uuid: "r1",
+      equation: "2d20",
+      total_value: "20",
+      values: ["17", "3"],
+      username: "Will",
+      owlbear_user_id: "p1",
+      created_at: "2026-10-25T10:00:00.000Z",
+    });
+    expect(metadata[RUMBLE_CHAT_KEY] as RumbleChatLine).toEqual({
+      chatlog: "Will rolled 2d20 (17, 3) = 20",
+      created: "2026-10-25T10:00:00.000Z",
+      sender: "DiceVision",
+      targetId: "0000",
+    });
+
+    // An unreadable roll is not forwarded
+    FakeSocket.last.receive({ type: "roll", data: { dice: [{ type: "d8", value: -1, face: "-1", readable: false }], total: 0 } });
+    await flush();
+    expect(broadcasts.filter((b) => b.channel === GRIMOIRE_ROLL_CHANNEL)).toHaveLength(1);
+    expect((metadata[RUMBLE_CHAT_KEY] as RumbleChatLine).chatlog).toBe("Will rolled 2d20 (17, 3) = 20");
+
+    // GM only: Grimoire's whisper channel to all clients, Rumble! to the roller alone
+    controller.setVisibility("gm");
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("9")], total: 9 } });
+    await flush();
+    expect(broadcasts.at(-1)).toMatchObject({ channel: GRIMOIRE_WHISPER_CHANNEL, destination: "ALL" });
+    expect((metadata[RUMBLE_CHAT_KEY] as RumbleChatLine).targetId).toBe("p1");
+
+    // Only me: still forwarded, but to this client only
+    controller.setVisibility("self");
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("1")], total: 1 } });
+    await flush();
+    expect(broadcasts.at(-1)).toMatchObject({ channel: GRIMOIRE_WHISPER_CHANNEL, destination: "LOCAL" });
+    expect(broadcasts.filter((b) => b.channel === ROLL_CHANNEL)).toHaveLength(2); // the Only me roll wasn't shared
+  });
+
+  it("never forwards other players' rolls (each client forwards its own)", async () => {
+    const { controller, deliver, broadcasts, metadata } = await setup();
+    controller.handle({ cmd: "setForward", target: "grimoire", on: true });
+    controller.handle({ cmd: "setForward", target: "rumble", on: true });
+    deliver({
+      v: 1,
+      playerId: "p2",
+      playerName: "Ana",
+      visibility: "everyone",
+      roll: { dice: [{ type: "d20", value: 17, face: "17", readable: true }], total: 17 },
+      sentAt: "t",
+    });
+    await flush();
+    expect(broadcasts).toHaveLength(0);
+    expect(metadata).toEqual({});
+  });
+
+  it("says so when forwarding fails, and keeps the roll", async () => {
+    const { controller, state, badges } = await setup({ failing: { metadata: true } });
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    controller.handle({ cmd: "setForward", target: "rumble", on: true });
+    controller.setContinuous(true);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("12")], total: 12 } });
+    await flush();
+    expect(state().log[0]).toMatchObject({ shared: true, roll: { total: 12 }, note: "Couldn't send it to Rumble!." });
+    expect(state().notice).toEqual({ text: "Rolled, but sending it to Rumble! failed.", tone: "warn" });
+    expect(badges.at(-1)).toBe("12");
+  });
+
+  it("a Grimoire failure is reported the same way", async () => {
+    const { controller, state } = await setup({ failing: { channels: [GRIMOIRE_ROLL_CHANNEL] } });
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    controller.handle({ cmd: "setForward", target: "grimoire", on: true });
+    controller.setContinuous(true);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("12")], total: 12 } });
+    await flush();
+    expect(state().notice).toEqual({ text: "Rolled, but sending it to Game Master's Grimoire failed.", tone: "warn" });
+  });
+
+  it("adds up several failures on one roll, keeps them on the log entry, and toasts while the popover is closed", async () => {
+    const { controller, state, notifications } = await setup({
+      actionOpen: false,
+      failing: { metadata: true, channels: [ROLL_CHANNEL, GRIMOIRE_ROLL_CHANNEL] },
+    });
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    controller.handle({ cmd: "setForward", target: "grimoire", on: true });
+    controller.handle({ cmd: "setForward", target: "rumble", on: true });
+    controller.setContinuous(true);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("12")], total: 12 } });
+    await flush();
+    const where = "the room, Game Master's Grimoire and Rumble!";
+    expect(state().notice).toEqual({ text: `Rolled, but sending it to ${where} failed.`, tone: "warn" });
+    expect(state().log[0].note).toBe(`Couldn't send it to ${where}.`);
+    expect(notifications.filter((n) => n.variant === "WARNING").at(-1)?.message).toBe(`DiceVision: sending the roll to ${where} failed.`);
+
+    // The next roll clears the notice as usual, but the failed entry keeps its note
+    controller.handle({ cmd: "setForward", target: "grimoire", on: false });
+    controller.handle({ cmd: "setForward", target: "rumble", on: false });
+    controller.setVisibility("self");
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("1")], total: 1 } });
+    await flush();
+    expect(state().notice).toBeNull();
+    expect(state().log[1].note).toBe(`Couldn't send it to ${where}.`);
+  });
+
+  it("reports a private roll it can't address instead of sending it to nobody", async () => {
+    const { controller, state, broadcasts, metadata } = await setup({ failing: { player: true } });
+    expect(state().notice?.text).toMatch(/Couldn't read your Owlbear Rodeo player/);
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    controller.handle({ cmd: "setForward", target: "grimoire", on: true });
+    controller.handle({ cmd: "setForward", target: "rumble", on: true });
+    controller.setVisibility("gm");
+    controller.setContinuous(true);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("12")], total: 12 } });
+    await flush();
+    expect(broadcasts.filter((b) => b.channel === GRIMOIRE_WHISPER_CHANNEL)).toHaveLength(0);
+    expect(metadata).toEqual({});
+    expect(state().notice?.text).toBe("Rolled, but sending it to Game Master's Grimoire and Rumble! failed.");
+
+    // Everyone rolls need no address and go out
+    controller.setVisibility("everyone");
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("12")], total: 12 } });
+    await flush();
+    expect(broadcasts.filter((b) => b.channel === GRIMOIRE_ROLL_CHANNEL)).toHaveLength(1);
+    expect(metadata[RUMBLE_CHAT_KEY]).toBeDefined();
+  });
+
   it("caps the log at 20 entries and can clear it", async () => {
     const { controller, state } = await setup();
     controller.connect("XKRM4N7B");
@@ -330,11 +502,13 @@ describe("Controller: commands", () => {
     controller.handle({ cmd: "setAutoConnect", on: false });
     controller.handle({ cmd: "setVisibility", visibility: "gm" });
     controller.handle({ cmd: "setContinuous", on: true });
+    controller.handle({ cmd: "setForward", target: "grimoire", on: true });
     expect(JSON.parse(storage.getItem("com.dirtyowlbear.dicevision/settings")!)).toEqual({
       sessionCode: null,
       autoConnect: false,
       continuous: true,
       visibility: "gm",
+      forward: { grimoire: true, rumble: false },
     });
     controller.handle({ cmd: "connect", code: "XKRM4N7B" });
     expect(state().connection).toBe("connecting");

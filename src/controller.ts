@@ -16,16 +16,20 @@
  *   shared" and we keep waiting for the reroll.
  * - `no_dice` (the camera saw nothing) gets one notification per Roll once;
  *   nothing in continuous mode, where every empty capture would toast.
+ * - A usable roll is also forwarded to the other extensions turned on in
+ *   settings.forward (Game Master's Grimoire, Rumble!), see forward.ts.
  */
 
 import { BridgeClient, type BridgeEvent, type ConnectionState } from "./bridge-client";
 import { describeRoll, isUsable, readRoll, summarizeTypes, unreadableDice, type Roll } from "./dice";
+import { grimoireMessage, rumbleChatPatch } from "./forward";
 import type { Host } from "./host";
 import { formatSessionCode, normalizeSessionCode } from "./session-code";
 import {
   availableStorage,
   loadSettings,
   saveSettings,
+  type ForwardTarget,
   type Settings,
   type StorageLike,
   type Visibility,
@@ -43,7 +47,7 @@ export interface LogEntry {
   roll: Roll;
   /** Whether the roll went out to the room (false: "Only me", or unusable) */
   shared: boolean;
-  /** Why a roll wasn't shared: "Couldn't read 1d8" */
+  /** Why a roll wasn't shared ("Couldn't read 1d8"), or where it failed to arrive ("Couldn't send it to Rumble!") */
   note: string | null;
 }
 
@@ -76,6 +80,7 @@ export type Command =
   | { cmd: "setContinuous"; on: boolean }
   | { cmd: "setVisibility"; visibility: Visibility }
   | { cmd: "setAutoConnect"; on: boolean }
+  | { cmd: "setForward"; target: ForwardTarget; on: boolean }
   | { cmd: "clearLog" }
   | { cmd: "clearNotice" };
 
@@ -97,6 +102,8 @@ export class Controller {
   private noDiceShown = false;
   private reconnectAttempt = 0;
   private log: LogEntry[] = [];
+  /** Where each of our log entries failed to go: "the room", "Rumble!" */
+  private readonly deliveryFailures = new Map<string, string[]>();
   private notice: Notice | null = null;
   private readonly listeners = new Set<(state: ControllerState) => void>();
   private readonly cleanups: (() => void)[] = [];
@@ -118,6 +125,7 @@ export class Controller {
       this.player = await this.host.getPlayer();
     } catch (err) {
       console.warn("[DiceVision] Couldn't read the player:", err);
+      this.setNotice("Couldn't read your Owlbear Rodeo player. Rolls are labelled \"You\" until you reload the room.", "warn");
     }
     this.cleanups.push(
       this.host.onPlayerChange((player) => {
@@ -181,6 +189,9 @@ export class Controller {
         break;
       case "setAutoConnect":
         this.setAutoConnect(command.on);
+        break;
+      case "setForward":
+        this.setForward(command.target, command.on);
         break;
       case "clearLog":
         this.log = [];
@@ -250,6 +261,11 @@ export class Controller {
 
   setAutoConnect(on: boolean): void {
     this.updateSettings({ autoConnect: on });
+    this.emit();
+  }
+
+  setForward(target: ForwardTarget, on: boolean): void {
+    this.updateSettings({ forward: { ...this.settings.forward, [target]: on } });
     this.emit();
   }
 
@@ -324,14 +340,11 @@ export class Controller {
       this.noDiceShown = false;
       this.notice = null;
       const share = buildShare(roll, this.player, this.settings.visibility, at);
-      this.addLogEntry({ at, mine: true, roll, shared: share !== null, note: null });
+      const entryId = this.addLogEntry({ at, mine: true, roll, shared: share !== null, note: null });
       if (share) {
-        void this.host.broadcast(ROLL_CHANNEL, share).catch((err) => {
-          console.error("[DiceVision] Failed to share the roll:", err);
-          this.setNotice("Rolled, but sharing it with the room failed.", "warn");
-          this.emit();
-        });
+        void this.host.broadcast(ROLL_CHANNEL, share, "REMOTE").catch((err) => this.deliveryFailed(entryId, "the room", err));
       }
+      this.forwardRoll(roll, at, entryId);
       void this.host.setBadge(String(roll.total)).catch(() => {});
       void this.notifyIfActionClosed(describeRoll(roll, "You"), "INFO");
     }
@@ -339,6 +352,47 @@ export class Controller {
     // The dashboard dropped its waiting flag when it sent this roll
     if (this.wantsRoll()) this.client.sendWaiting();
     else if (this.client.registered) this.client.sendCancel();
+  }
+
+  /** Send a usable roll to the other extensions turned on in settings. */
+  private forwardRoll(roll: Roll, at: string, entryId: string): void {
+    const { forward, visibility } = this.settings;
+    // A private roll is addressed to our player id (Grimoire's whisper check, Rumble!'s
+    // target); without one it would reach nobody, so report that instead of sending it.
+    const unaddressed = !this.player.id && visibility !== "everyone" ? new Error("player id unknown") : null;
+    if (forward.grimoire) {
+      const message = grimoireMessage(roll, this.player, visibility, at);
+      if (unaddressed) this.deliveryFailed(entryId, "Game Master's Grimoire", unaddressed);
+      else
+        void this.host
+          .broadcast(message.channel, message.data, message.destination)
+          .catch((err) => this.deliveryFailed(entryId, "Game Master's Grimoire", err));
+    }
+    if (forward.rumble) {
+      if (unaddressed) this.deliveryFailed(entryId, "Rumble!", unaddressed);
+      else
+        void this.host
+          .setPlayerMetadata(rumbleChatPatch(roll, this.player, visibility, at))
+          .catch((err) => this.deliveryFailed(entryId, "Rumble!", err));
+    }
+  }
+
+  /**
+   * A roll went out to the table but one destination refused it. Says so in
+   * the notice, on the log entry (which outlives the notice), and as a
+   * notification while the popover is closed. Several failures on one roll
+   * add up ("the room and Rumble!").
+   */
+  private deliveryFailed(entryId: string, destination: string, err: unknown): void {
+    console.error(`[DiceVision] Failed to send the roll to ${destination}:`, err);
+    const failed = [...(this.deliveryFailures.get(entryId) ?? []), destination];
+    this.deliveryFailures.set(entryId, failed);
+    for (const id of this.deliveryFailures.keys()) if (!this.log.some((e) => e.id === id)) this.deliveryFailures.delete(id);
+    const where = failed.length > 1 ? `${failed.slice(0, -1).join(", ")} and ${failed.at(-1)}` : failed[0];
+    this.log = this.log.map((e) => (e.id === entryId ? { ...e, note: `Couldn't send it to ${where}.` } : e));
+    this.setNotice(`Rolled, but sending it to ${where} failed.`, "warn");
+    void this.notifyIfActionClosed(`DiceVision: sending the roll to ${where} failed.`, "WARNING");
+    this.emit();
   }
 
   private onNoDice(): void {
@@ -377,17 +431,20 @@ export class Controller {
     }
   }
 
-  private addLogEntry(entry: Omit<LogEntry, "id" | "playerName" | "playerColor"> & Partial<Pick<LogEntry, "playerName" | "playerColor">>): void {
+  /** @returns the new entry's id */
+  private addLogEntry(entry: Omit<LogEntry, "id" | "playerName" | "playerColor"> & Partial<Pick<LogEntry, "playerName" | "playerColor">>): string {
     this.entryCounter++;
+    const id = `${entry.at}-${this.entryCounter}`;
     this.log = [
       {
-        id: `${entry.at}-${this.entryCounter}`,
+        id,
         playerName: entry.playerName ?? this.player.name,
         playerColor: entry.playerColor ?? this.player.color,
         ...entry,
       },
       ...this.log,
     ].slice(0, MAX_LOG_ENTRIES);
+    return id;
   }
 
   private setNotice(text: string, tone: Notice["tone"]): void {

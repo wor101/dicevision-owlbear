@@ -339,7 +339,7 @@ export class Controller {
       this.rollOncePending = false;
       this.noDiceShown = false;
       this.notice = null;
-      const share = buildShare(roll, this.player, this.settings.visibility, at);
+      const share = buildShare(roll, this.player, this.settings.visibility, at, this.settings.forward.rumble);
       const entryId = this.addLogEntry({ at, mine: true, roll, shared: share !== null, note: null });
       if (share) {
         void this.host.broadcast(ROLL_CHANNEL, share, "REMOTE").catch((err) => this.deliveryFailed(entryId, "the room", err));
@@ -354,12 +354,12 @@ export class Controller {
     else if (this.client.registered) this.client.sendCancel();
   }
 
-  /** Send a usable roll to the other extensions turned on in settings. */
+  /** Send our usable roll to the other extensions turned on in settings. */
   private forwardRoll(roll: Roll, at: string, entryId: string): void {
     const { forward, visibility } = this.settings;
     // A private roll is addressed to our player id (Grimoire's whisper check, Rumble!'s
     // target); without one it would reach nobody, so report that instead of sending it.
-    const unaddressed = !this.player.id && visibility !== "everyone" ? new Error("player id unknown") : null;
+    const unaddressed = this.unaddressed(visibility);
     if (forward.grimoire) {
       const message = grimoireMessage(roll, this.player, visibility, at);
       if (unaddressed) this.deliveryFailed(entryId, "Game Master's Grimoire", unaddressed);
@@ -368,13 +368,27 @@ export class Controller {
           .broadcast(message.channel, message.data, message.destination)
           .catch((err) => this.deliveryFailed(entryId, "Game Master's Grimoire", err));
     }
-    if (forward.rumble) {
-      if (unaddressed) this.deliveryFailed(entryId, "Rumble!", unaddressed);
-      else
-        void this.host
-          .setPlayerMetadata(rumbleChatPatch(roll, this.player, visibility, at))
-          .catch((err) => this.deliveryFailed(entryId, "Rumble!", err));
+    if (forward.rumble) this.writeRumbleLine(roll, this.player.name, visibility, at, entryId);
+  }
+
+  /**
+   * Put a roll into this client's own Rumble! chat. Rumble! shows a line only
+   * where it was written, so this runs for our own roll and for every shared
+   * roll whose roller asked for Rumble! (see forward.ts).
+   */
+  private writeRumbleLine(roll: Roll, rollerName: string, visibility: Visibility, at: string, entryId: string): void {
+    const unaddressed = this.unaddressed(visibility);
+    if (unaddressed) {
+      this.deliveryFailed(entryId, "Rumble!", unaddressed);
+      return;
     }
+    void this.host
+      .setPlayerMetadata(rumbleChatPatch(roll, rollerName, visibility, this.player.id, at))
+      .catch((err) => this.deliveryFailed(entryId, "Rumble!", err));
+  }
+
+  private unaddressed(visibility: Visibility): Error | null {
+    return !this.player.id && visibility !== "everyone" ? new Error("player id unknown") : null;
   }
 
   /**
@@ -389,9 +403,14 @@ export class Controller {
     this.deliveryFailures.set(entryId, failed);
     for (const id of this.deliveryFailures.keys()) if (!this.log.some((e) => e.id === id)) this.deliveryFailures.delete(id);
     const where = failed.length > 1 ? `${failed.slice(0, -1).join(", ")} and ${failed.at(-1)}` : failed[0];
+    const entry = this.log.find((e) => e.id === entryId);
     this.log = this.log.map((e) => (e.id === entryId ? { ...e, note: `Couldn't send it to ${where}.` } : e));
-    this.setNotice(`Rolled, but sending it to ${where} failed.`, "warn");
-    void this.notifyIfActionClosed(`DiceVision: sending the roll to ${where} failed.`, "WARNING");
+    const whose = entry && !entry.mine ? `${entry.playerName}'s roll` : "the roll";
+    this.setNotice(
+      entry && !entry.mine ? `Couldn't send ${whose} to ${where}.` : `Rolled, but sending it to ${where} failed.`,
+      "warn",
+    );
+    void this.notifyIfActionClosed(`DiceVision: sending ${whose} to ${where} failed.`, "WARNING");
     this.emit();
   }
 
@@ -409,7 +428,7 @@ export class Controller {
     if (!share) return;
     if (share.playerId && share.playerId === this.player.id) return; // our own, already logged
     if (!shouldShow(share, this.player)) return;
-    this.addLogEntry({
+    const entryId = this.addLogEntry({
       at: share.sentAt,
       mine: false,
       roll: share.roll,
@@ -419,6 +438,8 @@ export class Controller {
       playerColor: share.playerColor,
     });
     void this.host.notify(describeRoll(share.roll, share.playerName), "INFO").catch(() => {});
+    // The roller's Rumble! choice, carried out here because Rumble! lines are per client
+    if (share.rumble) this.writeRumbleLine(share.roll, share.playerName, share.visibility, share.sentAt, entryId);
     this.emit();
   }
 

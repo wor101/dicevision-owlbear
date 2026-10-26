@@ -2,7 +2,7 @@
 
 An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://github.com/wor101/dice-vision), an AI-powered physical dice recognition system. Roll real dice in front of a camera and the results show up in your Owlbear Rodeo room for the whole table.
 
-> **Status:** 0.2.0, live at `rodeo.dirtyowlbear.com` and used in live rooms since 0.1.1 (Chrome and Firefox, desktop and phone). New in 0.2.0: optional forwarding of rolls into Game Master's Grimoire and Rumble!, still to be checked in a room that has those extensions.
+> **Status:** 0.2.1, live at `rodeo.dirtyowlbear.com` and used in live rooms since 0.1.1 (Chrome and Firefox, desktop and phone). 0.2.x adds optional forwarding of rolls into Game Master's Grimoire and Rumble!, checked in a room with both.
 
 ## Requirements
 
@@ -46,9 +46,9 @@ Owlbear Rodeo has no roll log or chat of its own, so groups often use [Game Mast
 | Extension | How the roll arrives | Everyone | GM only | Only me |
 |-----------|----------------------|----------|---------|---------|
 | Game Master's Grimoire | Its roll-event broadcast, labelled **DiceVision** (game labels become **DiceVision: Critical!**), equation `1d20+2d6`, faces and total | Every client's log | Its whisper channel: the GM's log and yours | Your log only |
-| Rumble! | A chat line from **DiceVision**: `Will rolled 1d20 (17) + 2d6 (4, 3) = 24` (with ` · Critical!` appended for game labels) | Everyone's chat | Whispered to you | Whispered to you |
+| Rumble! | A chat line from **DiceVision**: `Will rolled 1d20 (17) + 2d6 (4, 3) = 24` (with ` · Critical!` appended for game labels). Rumble! shows such a line only on the client that wrote it, so every client that shows your roll writes its own copy | Everyone's chat | The GM's chat and yours, as a private line | Your chat, as a private line |
 
-Neither extension publishes these shapes; they come from their source and from the Pixels Dice extension (`src/forward.ts` documents them). If one of them changes its format, turn the toggle off and [open an issue](https://github.com/wor101/dicevision-owlbear/issues). A roll the camera couldn't fully read is never forwarded.
+Neither extension publishes these shapes; they come from their source, from the Pixels Dice extension and from trying them in a room (`src/forward.ts` documents them). If one of them changes its format, turn the toggle off and [open an issue](https://github.com/wor101/dicevision-owlbear/issues). A roll the camera couldn't fully read is never forwarded. Players still on 0.2.0 don't write Rumble! lines for other people's rolls.
 
 ## What it does not do
 

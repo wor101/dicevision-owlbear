@@ -284,6 +284,7 @@ describe("Controller: sharing", () => {
       visibility: "everyone",
       roll: { dice: [{ type: "d20", value: 17, face: "17", readable: true, icon: null }], total: 17, rollId: null, tags: [] },
       sentAt: "2026-10-25T10:00:00Z",
+      rumble: false,
     };
     deliver(share);
     expect(state().log[0]).toMatchObject({ mine: false, playerName: "Will", shared: true });
@@ -388,10 +389,10 @@ describe("Controller: sharing", () => {
     expect(broadcasts.filter((b) => b.channel === ROLL_CHANNEL)).toHaveLength(2); // the Only me roll wasn't shared
   });
 
-  it("never forwards other players' rolls (each client forwards its own)", async () => {
+  it("never re-broadcasts other players' rolls to Grimoire, and leaves Rumble! alone unless the roller asked", async () => {
     const { controller, deliver, broadcasts, metadata } = await setup();
     controller.handle({ cmd: "setForward", target: "grimoire", on: true });
-    controller.handle({ cmd: "setForward", target: "rumble", on: true });
+    controller.handle({ cmd: "setForward", target: "rumble", on: true }); // our own setting doesn't apply to their rolls
     deliver({
       v: 1,
       playerId: "p2",
@@ -403,6 +404,53 @@ describe("Controller: sharing", () => {
     await flush();
     expect(broadcasts).toHaveLength(0);
     expect(metadata).toEqual({});
+  });
+
+  it("writes another player's roll into this client's Rumble! chat when they asked for it", async () => {
+    const anaRoll = {
+      v: 1,
+      playerId: "p2",
+      playerName: "Ana",
+      visibility: "everyone",
+      roll: { dice: [{ type: "d20", value: 17, face: "17", readable: true }], total: 17 },
+      sentAt: "2026-10-26T20:00:00.000Z",
+      rumble: true,
+    };
+    const asPlayer = await setup();
+    asPlayer.deliver(anaRoll);
+    await flush();
+    expect(asPlayer.metadata[RUMBLE_CHAT_KEY]).toEqual({
+      chatlog: "Ana rolled 1d20 (17) = 17",
+      created: "2026-10-26T20:00:00.000Z",
+      sender: "DiceVision",
+      targetId: "0000",
+    });
+    expect(asPlayer.broadcasts).toHaveLength(0); // Grimoire got it from the roller's ALL broadcast
+
+    // A GM-only roll: a player client never shows it, a GM client writes it as a private line
+    asPlayer.deliver({ ...anaRoll, visibility: "gm", sentAt: "later" });
+    await flush();
+    expect((asPlayer.metadata[RUMBLE_CHAT_KEY] as RumbleChatLine).created).toBe("2026-10-26T20:00:00.000Z");
+    const asGm = await setup({ player: { id: "gm", name: "GM", color: null, role: "GM" } });
+    asGm.deliver({ ...anaRoll, visibility: "gm" });
+    await flush();
+    expect((asGm.metadata[RUMBLE_CHAT_KEY] as RumbleChatLine).targetId).toBe("gm");
+  });
+
+  it("reports a failed Rumble! write of another player's roll on that entry", async () => {
+    const { deliver, state } = await setup({ failing: { metadata: true } });
+    deliver({
+      v: 1,
+      playerId: "p2",
+      playerName: "Ana",
+      visibility: "everyone",
+      roll: { dice: [{ type: "d20", value: 17, face: "17", readable: true }], total: 17 },
+      sentAt: "t",
+      rumble: true,
+    });
+    await flush();
+    expect(state().log[0]).toMatchObject({ mine: false, playerName: "Ana", note: "Couldn't send it to Rumble!." });
+    expect(state().notice).toEqual({ text: "Couldn't send Ana's roll to Rumble!.", tone: "warn" });
   });
 
   it("says so when forwarding fails, and keeps the roll", async () => {

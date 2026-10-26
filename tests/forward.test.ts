@@ -96,7 +96,7 @@ describe("grimoireMessage", () => {
 
 describe("rumbleChatPatch", () => {
   it("is one chat line under Rumble!'s metadata key", () => {
-    expect(rumbleChatPatch(roll, will, "everyone", at)).toEqual({
+    expect(rumbleChatPatch(roll, "Will", "everyone", "p1", at)).toEqual({
       [RUMBLE_CHAT_KEY]: {
         chatlog: "Will rolled 1d20 (17) + 2d6 (4, 3) = 24 · Critical!",
         created: at,
@@ -106,8 +106,10 @@ describe("rumbleChatPatch", () => {
     });
   });
 
-  it("whispers to the roller when the roll isn't for everyone", () => {
-    expect(rumbleChatPatch(roll, will, "gm", at)[RUMBLE_CHAT_KEY].targetId).toBe("p1");
-    expect(rumbleChatPatch(roll, will, "self", at)[RUMBLE_CHAT_KEY].targetId).toBe("p1");
+  it("names another player's roll and addresses a private one to this client", () => {
+    const line = rumbleChatPatch(roll, "Ana", "gm", "gm-id", at)[RUMBLE_CHAT_KEY];
+    expect(line.chatlog).toMatch(/^Ana rolled /);
+    expect(line.targetId).toBe("gm-id");
+    expect(rumbleChatPatch(roll, "Will", "self", "p1", at)[RUMBLE_CHAT_KEY].targetId).toBe("p1");
   });
 });

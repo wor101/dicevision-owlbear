@@ -49,6 +49,7 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {})
   const badges: (string | undefined)[] = [];
   const broadcasts: { channel: string; data: unknown; destination: BroadcastDestination }[] = [];
   const metadata: Record<string, unknown> = {};
+  const metadataWrites: Record<string, unknown>[] = [];
   const subscribers = new Map<string, (data: unknown) => void>();
   const host: Host = {
     available: true,
@@ -71,9 +72,18 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {})
     setPlayerMetadata: async (patch) => {
       if (failing.metadata) throw new Error("metadata refused");
       Object.assign(metadata, patch);
+      metadataWrites.push(patch);
     },
   };
-  return { host, notifications, badges, broadcasts, metadata, deliver: (data: unknown) => subscribers.get(ROLL_CHANNEL)?.(data) };
+  return {
+    host,
+    notifications,
+    badges,
+    broadcasts,
+    metadata,
+    metadataWrites,
+    deliver: (data: unknown) => subscribers.get(ROLL_CHANNEL)?.(data),
+  };
 }
 
 function memoryStorage(initial?: string): StorageLike {
@@ -275,7 +285,7 @@ describe("Controller: sharing", () => {
   });
 
   it("logs and announces other players' rolls it should see", async () => {
-    const { deliver, state, notifications } = await setup({ player: { id: "p2", name: "GM", color: null, role: "PLAYER" } });
+    const { deliver, state, notifications, metadata } = await setup({ player: { id: "p2", name: "GM", color: null, role: "PLAYER" } });
     const share: SharedRoll = {
       v: 1,
       playerId: "p1",
@@ -292,9 +302,11 @@ describe("Controller: sharing", () => {
     expect(notifications.at(-1)).toEqual({ message: "Will rolled 1d20 (17) = 17", variant: "INFO" });
 
     deliver({ ...share, visibility: "gm" }); // we're a player
-    deliver({ ...share, playerId: "p2" }); // our own echo
+    deliver({ ...share, playerId: "p2", rumble: true }); // our own echo: not logged, no Rumble! line either
     deliver("junk");
+    await flush();
     expect(state().log).toHaveLength(1);
+    expect(metadata).toEqual({});
   });
 
   it("a GM sees GM-only rolls", async () => {
@@ -336,7 +348,30 @@ describe("Controller: sharing", () => {
     FakeSocket.last.receive({ type: "roll", data: { dice: [d20("12")], total: 12 } });
     await flush();
     expect(broadcasts.map((b) => b.channel)).toEqual([ROLL_CHANNEL]);
+    expect((broadcasts[0].data as SharedRoll).rumble).toBe(false); // receivers write no Rumble! line either
     expect(metadata).toEqual({});
+  });
+
+  it("carries the roller's Rumble! choice to every client that shows the roll, whatever that client's own setting", async () => {
+    const roller = await setup();
+    const receiver = await setup({ player: { id: "p2", name: "Ana", color: null, role: "PLAYER" } });
+    receiver.controller.handle({ cmd: "setForward", target: "rumble", on: false });
+    roller.controller.handle({ cmd: "setForward", target: "rumble", on: true });
+    roller.controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    roller.controller.setContinuous(true);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("17")], total: 17 } });
+    await flush();
+    const shared = roller.broadcasts.find((b) => b.channel === ROLL_CHANNEL)!;
+    expect(shared.destination).toBe("REMOTE");
+    expect((shared.data as SharedRoll).rumble).toBe(true);
+    expect(roller.metadataWrites).toHaveLength(1); // the roller's own line, once
+
+    receiver.deliver(JSON.parse(JSON.stringify(shared.data)));
+    await flush();
+    expect(receiver.metadataWrites).toHaveLength(1);
+    expect(receiver.metadata[RUMBLE_CHAT_KEY]).toMatchObject({ chatlog: "Will rolled 1d20 (17) = 17", targetId: "0000" });
+    expect(receiver.broadcasts).toHaveLength(0);
   });
 
   it("forwards a usable roll to Grimoire and Rumble! when turned on, following the visibility", async () => {
@@ -374,7 +409,8 @@ describe("Controller: sharing", () => {
     expect(broadcasts.filter((b) => b.channel === GRIMOIRE_ROLL_CHANNEL)).toHaveLength(1);
     expect((metadata[RUMBLE_CHAT_KEY] as RumbleChatLine).chatlog).toBe("Will rolled 2d20 (17, 3) = 20");
 
-    // GM only: Grimoire's whisper channel to all clients, Rumble! to the roller alone
+    // GM only: Grimoire's whisper channel to all clients; our own Rumble! line is addressed to
+    // ourselves (GM clients write theirs on receipt, tested below)
     controller.setVisibility("gm");
     FakeSocket.last.receive({ type: "roll", data: { dice: [d20("9")], total: 9 } });
     await flush();
@@ -417,6 +453,7 @@ describe("Controller: sharing", () => {
       rumble: true,
     };
     const asPlayer = await setup();
+    asPlayer.controller.handle({ cmd: "setForward", target: "rumble", on: false }); // the roller's choice counts, not ours
     asPlayer.deliver(anaRoll);
     await flush();
     expect(asPlayer.metadata[RUMBLE_CHAT_KEY]).toEqual({
@@ -437,8 +474,10 @@ describe("Controller: sharing", () => {
     expect((asGm.metadata[RUMBLE_CHAT_KEY] as RumbleChatLine).targetId).toBe("gm");
   });
 
-  it("reports a failed Rumble! write of another player's roll on that entry", async () => {
-    const { deliver, state } = await setup({ failing: { metadata: true } });
+  it("reports a failed Rumble! write of another player's roll on that entry, without taking over the notice", async () => {
+    const { controller, deliver, state, notifications } = await setup({ failing: { metadata: true } });
+    controller.rollOnce(); // "connect first": our own notice, which Ana's failure must not replace
+    const ours = state().notice;
     deliver({
       v: 1,
       playerId: "p2",
@@ -450,11 +489,36 @@ describe("Controller: sharing", () => {
     });
     await flush();
     expect(state().log[0]).toMatchObject({ mine: false, playerName: "Ana", note: "Couldn't send it to Rumble!." });
-    expect(state().notice).toEqual({ text: "Couldn't send Ana's roll to Rumble!.", tone: "warn" });
+    expect(state().notice).toEqual(ours);
+    expect(notifications.filter((n) => n.variant === "WARNING").at(-1)?.message).toBe("DiceVision: sending Ana's roll to Rumble! failed.");
+  });
+
+  it("a received Everyone roll still gets its Rumble! line when our own player is unknown; a private one is reported", async () => {
+    const ana = {
+      v: 1,
+      playerId: "p2",
+      playerName: "Ana",
+      visibility: "everyone",
+      roll: { dice: [{ type: "d20", value: 17, face: "17", readable: true }], total: 17 },
+      sentAt: "t",
+      rumble: true,
+    };
+    const noPlayer = await setup({ failing: { player: true } });
+    noPlayer.deliver(ana);
+    await flush();
+    expect(noPlayer.metadata[RUMBLE_CHAT_KEY]).toMatchObject({ chatlog: "Ana rolled 1d20 (17) = 17", targetId: "0000" });
+    expect(noPlayer.state().notice?.text).toMatch(/Couldn't read your Owlbear Rodeo player/); // untouched
+
+    // A GM whose id is unknown (not something OBR does; pins the guard on the receive side)
+    const gm = await setup({ player: { id: "", name: "GM", color: null, role: "GM" } });
+    gm.deliver({ ...ana, visibility: "gm" });
+    await flush();
+    expect(gm.metadata).toEqual({});
+    expect(gm.state().log[0].note).toBe("Couldn't send it to Rumble!. Your Owlbear Rodeo player couldn't be read; reload the room.");
   });
 
   it("says so when forwarding fails, and keeps the roll", async () => {
-    const { controller, state, badges } = await setup({ failing: { metadata: true } });
+    const { controller, state, badges, metadataWrites } = await setup({ failing: { metadata: true } });
     controller.connect("XKRM4N7B");
     FakeSocket.last.confirm();
     controller.handle({ cmd: "setForward", target: "rumble", on: true });
@@ -464,6 +528,7 @@ describe("Controller: sharing", () => {
     expect(state().log[0]).toMatchObject({ shared: true, roll: { total: 12 }, note: "Couldn't send it to Rumble!." });
     expect(state().notice).toEqual({ text: "Rolled, but sending it to Rumble! failed.", tone: "warn" });
     expect(badges.at(-1)).toBe("12");
+    expect(metadataWrites).toHaveLength(0);
   });
 
   it("a Grimoire failure is reported the same way", async () => {
@@ -517,7 +582,9 @@ describe("Controller: sharing", () => {
     await flush();
     expect(broadcasts.filter((b) => b.channel === GRIMOIRE_WHISPER_CHANNEL)).toHaveLength(0);
     expect(metadata).toEqual({});
-    expect(state().notice?.text).toBe("Rolled, but sending it to Game Master's Grimoire and Rumble! failed.");
+    expect(state().notice?.text).toBe(
+      "Rolled, but sending it to Game Master's Grimoire and Rumble! failed. Your Owlbear Rodeo player couldn't be read; reload the room.",
+    );
 
     // Everyone rolls need no address and go out
     controller.setVisibility("everyone");

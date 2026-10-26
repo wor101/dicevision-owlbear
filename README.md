@@ -48,7 +48,7 @@ Owlbear Rodeo has no roll log or chat of its own, so groups often use [Game Mast
 | Game Master's Grimoire | Its roll-event broadcast, labelled **DiceVision** (game labels become **DiceVision: Critical!**), equation `1d20+2d6`, faces and total | Every client's log | Its whisper channel: the GM's log and yours | Your log only |
 | Rumble! | A chat line from **DiceVision**: `Will rolled 1d20 (17) + 2d6 (4, 3) = 24` (with ` · Critical!` appended for game labels). Rumble! shows such a line only on the client that wrote it, so every client that shows your roll writes its own copy | Everyone's chat | The GM's chat and yours, as a private line | Your chat, as a private line |
 
-Neither extension publishes these shapes; they come from their source, from the Pixels Dice extension and from trying them in a room (`src/forward.ts` documents them). If one of them changes its format, turn the toggle off and [open an issue](https://github.com/wor101/dicevision-owlbear/issues). A roll the camera couldn't fully read is never forwarded. Players still on 0.2.0 don't write Rumble! lines for other people's rolls.
+Neither extension publishes these shapes; they come from their source, from the Pixels Dice extension and from trying them in a room (`src/forward.ts` documents them). If one of them changes its format, turn the toggle off and [open an issue](https://github.com/wor101/dicevision-owlbear/issues). A roll the camera couldn't fully read is never forwarded. The Rumble! line for someone else's roll follows *their* toggle, not yours: it is their roll, written into your chat on their behalf. Players still on 0.2.0 don't write Rumble! lines for other people's rolls.
 
 ## What it does not do
 

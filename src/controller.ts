@@ -18,6 +18,8 @@
  *   nothing in continuous mode, where every empty capture would toast.
  * - A usable roll is also forwarded to the other extensions turned on in
  *   settings.forward (Game Master's Grimoire, Rumble!), see forward.ts.
+ *   Rumble! lines are per client, so a shared roll whose roller asked for
+ *   Rumble! is written here too (onSharedRoll), whatever our own setting.
  */
 
 import { BridgeClient, type BridgeEvent, type ConnectionState } from "./bridge-client";
@@ -54,6 +56,13 @@ export interface LogEntry {
 export interface Notice {
   text: string;
   tone: "info" | "warn" | "error";
+}
+
+/** Whose roll a delivery was for, named up front so a failure is worded right even after the entry left the log. */
+interface DeliverySubject {
+  entryId: string;
+  mine: boolean;
+  playerName: string;
 }
 
 export interface ControllerState {
@@ -102,7 +111,7 @@ export class Controller {
   private noDiceShown = false;
   private reconnectAttempt = 0;
   private log: LogEntry[] = [];
-  /** Where each of our log entries failed to go: "the room", "Rumble!" */
+  /** Where each log entry failed to go ("the room", "Rumble!"); another player's entry can fail on its Rumble! line */
   private readonly deliveryFailures = new Map<string, string[]>();
   private notice: Notice | null = null;
   private readonly listeners = new Set<(state: ControllerState) => void>();
@@ -341,10 +350,11 @@ export class Controller {
       this.notice = null;
       const share = buildShare(roll, this.player, this.settings.visibility, at, this.settings.forward.rumble);
       const entryId = this.addLogEntry({ at, mine: true, roll, shared: share !== null, note: null });
+      const subject: DeliverySubject = { entryId, mine: true, playerName: this.player.name };
       if (share) {
-        void this.host.broadcast(ROLL_CHANNEL, share, "REMOTE").catch((err) => this.deliveryFailed(entryId, "the room", err));
+        void this.host.broadcast(ROLL_CHANNEL, share, "REMOTE").catch((err) => this.deliveryFailed(subject, "the room", err));
       }
-      this.forwardRoll(roll, at, entryId);
+      this.forwardRoll(roll, at, subject);
       void this.host.setBadge(String(roll.total)).catch(() => {});
       void this.notifyIfActionClosed(describeRoll(roll, "You"), "INFO");
     }
@@ -355,62 +365,68 @@ export class Controller {
   }
 
   /** Send our usable roll to the other extensions turned on in settings. */
-  private forwardRoll(roll: Roll, at: string, entryId: string): void {
+  private forwardRoll(roll: Roll, at: string, subject: DeliverySubject): void {
     const { forward, visibility } = this.settings;
-    // A private roll is addressed to our player id (Grimoire's whisper check, Rumble!'s
-    // target); without one it would reach nobody, so report that instead of sending it.
-    const unaddressed = this.unaddressed(visibility);
     if (forward.grimoire) {
-      const message = grimoireMessage(roll, this.player, visibility, at);
-      if (unaddressed) this.deliveryFailed(entryId, "Game Master's Grimoire", unaddressed);
-      else
+      const unaddressed = this.unaddressed(visibility);
+      if (unaddressed) this.deliveryFailed(subject, "Game Master's Grimoire", new Error("player id unknown"), unaddressed);
+      else {
+        const message = grimoireMessage(roll, this.player, visibility, at);
         void this.host
           .broadcast(message.channel, message.data, message.destination)
-          .catch((err) => this.deliveryFailed(entryId, "Game Master's Grimoire", err));
+          .catch((err) => this.deliveryFailed(subject, "Game Master's Grimoire", err));
+      }
     }
-    if (forward.rumble) this.writeRumbleLine(roll, this.player.name, visibility, at, entryId);
+    if (forward.rumble) this.writeRumbleLine(roll, visibility, at, subject);
   }
 
   /**
    * Put a roll into this client's own Rumble! chat. Rumble! shows a line only
    * where it was written, so this runs for our own roll and for every shared
-   * roll whose roller asked for Rumble! (see forward.ts).
+   * roll whose roller asked for Rumble! (see forward.ts). The subject names
+   * the roller.
    */
-  private writeRumbleLine(roll: Roll, rollerName: string, visibility: Visibility, at: string, entryId: string): void {
+  private writeRumbleLine(roll: Roll, visibility: Visibility, at: string, subject: DeliverySubject): void {
     const unaddressed = this.unaddressed(visibility);
     if (unaddressed) {
-      this.deliveryFailed(entryId, "Rumble!", unaddressed);
+      this.deliveryFailed(subject, "Rumble!", new Error("player id unknown"), unaddressed);
       return;
     }
     void this.host
-      .setPlayerMetadata(rumbleChatPatch(roll, rollerName, visibility, this.player.id, at))
-      .catch((err) => this.deliveryFailed(entryId, "Rumble!", err));
-  }
-
-  private unaddressed(visibility: Visibility): Error | null {
-    return !this.player.id && visibility !== "everyone" ? new Error("player id unknown") : null;
+      .setPlayerMetadata(rumbleChatPatch(roll, subject.playerName, visibility, this.player.id, at))
+      .catch((err) => this.deliveryFailed(subject, "Rumble!", err));
   }
 
   /**
-   * A roll went out to the table but one destination refused it. Says so in
-   * the notice, on the log entry (which outlives the notice), and as a
-   * notification while the popover is closed. Several failures on one roll
-   * add up ("the room and Rumble!").
+   * A private roll needs our player id: Grimoire checks `owlbear_user_id` on
+   * its whisper channel and Rumble! uses it as the private line's target.
+   * Without one (getPlayer() failed at start) the roll would be misaddressed,
+   * so the caller reports a failure with this reason instead of sending it.
    */
-  private deliveryFailed(entryId: string, destination: string, err: unknown): void {
-    console.error(`[DiceVision] Failed to send the roll to ${destination}:`, err);
+  private unaddressed(visibility: Visibility): string | null {
+    return !this.player.id && visibility !== "everyone" ? "Your Owlbear Rodeo player couldn't be read; reload the room." : null;
+  }
+
+  /**
+   * One destination refused a roll that went out to the table: the room
+   * share, Grimoire, or this client's Rumble! line. Says so on the log entry
+   * (which outlives the notice) and as a notification while the popover is
+   * closed; for our own roll also in the notice, which another player's roll
+   * must not take over. Several failures on one roll add up ("the room and
+   * Rumble!"); a reason the user can act on is appended when there is one.
+   */
+  private deliveryFailed(subject: DeliverySubject, destination: string, err: unknown, reason?: string): void {
+    const { entryId, mine, playerName } = subject;
+    console.error(`[DiceVision] Failed to send roll ${entryId} (${mine ? "ours" : playerName}) to ${destination}:`, err);
     const failed = [...(this.deliveryFailures.get(entryId) ?? []), destination];
     this.deliveryFailures.set(entryId, failed);
     for (const id of this.deliveryFailures.keys()) if (!this.log.some((e) => e.id === id)) this.deliveryFailures.delete(id);
     const where = failed.length > 1 ? `${failed.slice(0, -1).join(", ")} and ${failed.at(-1)}` : failed[0];
-    const entry = this.log.find((e) => e.id === entryId);
-    this.log = this.log.map((e) => (e.id === entryId ? { ...e, note: `Couldn't send it to ${where}.` } : e));
-    const whose = entry && !entry.mine ? `${entry.playerName}'s roll` : "the roll";
-    this.setNotice(
-      entry && !entry.mine ? `Couldn't send ${whose} to ${where}.` : `Rolled, but sending it to ${where} failed.`,
-      "warn",
-    );
-    void this.notifyIfActionClosed(`DiceVision: sending ${whose} to ${where} failed.`, "WARNING");
+    const why = reason ? ` ${reason}` : "";
+    this.log = this.log.map((e) => (e.id === entryId ? { ...e, note: `Couldn't send it to ${where}.${why}` } : e));
+    if (mine) this.setNotice(`Rolled, but sending it to ${where} failed.${why}`, "warn");
+    const whose = mine ? "the roll" : `${playerName}'s roll`;
+    void this.notifyIfActionClosed(`DiceVision: sending ${whose} to ${where} failed.${why}`, "WARNING");
     this.emit();
   }
 
@@ -439,7 +455,9 @@ export class Controller {
     });
     void this.host.notify(describeRoll(share.roll, share.playerName), "INFO").catch(() => {});
     // The roller's Rumble! choice, carried out here because Rumble! lines are per client
-    if (share.rumble) this.writeRumbleLine(share.roll, share.playerName, share.visibility, share.sentAt, entryId);
+    if (share.rumble) {
+      this.writeRumbleLine(share.roll, share.visibility, share.sentAt, { entryId, mine: false, playerName: share.playerName });
+    }
     this.emit();
   }
 

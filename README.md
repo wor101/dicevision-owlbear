@@ -59,7 +59,7 @@ To try a local build in Owlbear Rodeo, add `http://localhost:5173/manifest.json`
 
 The built site (`dist/`) is served by the DiceVision droplet at `https://rodeo.dirtyowlbear.com` (nginx vhost `nginx/rodeo.conf` in the [dice-vision](https://github.com/wor101/dice-vision) repo, web root `/var/www/rodeo`). That host sends `Content-Security-Policy: frame-ancestors` for the Owlbear Rodeo origins instead of the main site's `X-Frame-Options`, and `Access-Control-Allow-Origin: *` so Owlbear Rodeo can fetch the manifest.
 
-`scripts/deploy.sh` builds and rsyncs `dist/` there (`DEPLOY_TARGET=user@host:/var/www/rodeo` to override the destination); `.github/workflows/deploy.yml` does the same on every push to `main` when the `DEPLOY_TARGET`, `DEPLOY_SSH_KEY` and `DEPLOY_KNOWN_HOSTS` secrets are set. The manifest, popover and background page use site-relative paths, so the site works at any host. Droplet setup (DNS, certificate, vhost) is in the dice-vision repo's `docs/backend/DEPLOYMENT.md`.
+`scripts/deploy.sh` builds and rsyncs `dist/` there (`DEPLOY_TARGET=user@host:/var/www/rodeo` to override the destination); `.github/workflows/deploy.yml` does the same on every push to `main` with the `DEPLOY_TARGET`, `DEPLOY_SSH_KEY` and `DEPLOY_KNOWN_HOSTS` secrets. Its key is restricted on the droplet to rsync within the web root (`rrsync`), so the workflow's target is `root@rodeo.dirtyowlbear.com:/`, which maps to `/var/www/rodeo`. The manifest, popover and background page use site-relative paths, so the site works at any host. Droplet setup (DNS, certificate, vhost) is in the dice-vision repo's `docs/backend/DEPLOYMENT.md`.
 
 ## Related
 

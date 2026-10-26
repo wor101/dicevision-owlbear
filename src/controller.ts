@@ -23,12 +23,14 @@
  */
 
 import { BridgeClient, type BridgeEvent, type ConnectionState } from "./bridge-client";
+import { createDddiceRoll, dddiceRollRequest, readDddiceSetup, type DddiceSetup, type FetchLike } from "./dddice";
 import { describeRoll, isUsable, readRoll, summarizeTypes, unreadableDice, type Roll } from "./dice";
 import { grimoireMessage, rumbleChatPatch } from "./forward";
 import type { Host } from "./host";
 import { formatSessionCode, normalizeSessionCode } from "./session-code";
 import {
   availableStorage,
+  DEFAULT_SETTINGS,
   loadSettings,
   saveSettings,
   type ForwardTarget,
@@ -78,6 +80,8 @@ export interface ControllerState {
   player: PlayerInfo;
   log: LogEntry[];
   notice: Notice | null;
+  /** What the dddice extension has set up in this room for us (the key itself stays private) */
+  dddice: { room: string | null; hasKey: boolean };
 }
 
 export type Command =
@@ -90,6 +94,7 @@ export type Command =
   | { cmd: "setVisibility"; visibility: Visibility }
   | { cmd: "setAutoConnect"; on: boolean }
   | { cmd: "setForward"; target: ForwardTarget; on: boolean }
+  | { cmd: "setDddiceTheme"; theme: string }
   | { cmd: "clearLog" }
   | { cmd: "clearNotice" };
 
@@ -98,6 +103,8 @@ export interface ControllerOptions {
   /** null: no storage; undefined: probe localStorage */
   storage?: StorageLike | null;
   now?: () => Date;
+  /** For the dddice API; defaults to the browser's fetch */
+  fetch?: FetchLike;
 }
 
 export class Controller {
@@ -105,7 +112,10 @@ export class Controller {
   private readonly client: BridgeClient;
   private readonly storage: StorageLike | null;
   private readonly now: () => Date;
+  private readonly fetch: FetchLike;
   private settings: Settings;
+  private roomMetadata: Record<string, unknown> = {};
+  private dddice: DddiceSetup = { room: null, apiKey: null };
   private player: PlayerInfo = { id: "", name: "You", color: null, role: "PLAYER" };
   private rollOncePending = false;
   private noDiceShown = false;
@@ -123,6 +133,7 @@ export class Controller {
     this.client = options.client ?? new BridgeClient();
     this.storage = options.storage === undefined ? availableStorage() : options.storage;
     this.now = options.now ?? (() => new Date());
+    this.fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.settings = loadSettings(this.storage);
   }
 
@@ -139,6 +150,18 @@ export class Controller {
     this.cleanups.push(
       this.host.onPlayerChange((player) => {
         this.player = player;
+        this.readRoom(this.roomMetadata);
+        this.emit();
+      }),
+    );
+    try {
+      this.readRoom(await this.host.getRoomMetadata());
+    } catch (err) {
+      console.warn("[DiceVision] Couldn't read the room metadata:", err);
+    }
+    this.cleanups.push(
+      this.host.onRoomMetadataChange((metadata) => {
+        this.readRoom(metadata);
         this.emit();
       }),
     );
@@ -170,7 +193,14 @@ export class Controller {
       player: this.player,
       log: this.log,
       notice: this.notice,
+      dddice: { room: this.dddice.room, hasKey: this.dddice.apiKey !== null },
     };
+  }
+
+  /** Pick up what the dddice extension wrote to the room (its room slug, our API key). */
+  private readRoom(metadata: Record<string, unknown>): void {
+    this.roomMetadata = metadata;
+    this.dddice = readDddiceSetup(metadata, this.player.id);
   }
 
   handle(command: Command): void {
@@ -201,6 +231,10 @@ export class Controller {
         break;
       case "setForward":
         this.setForward(command.target, command.on);
+        break;
+      case "setDddiceTheme":
+        this.updateSettings({ dddiceTheme: command.theme.trim() || DEFAULT_SETTINGS.dddiceTheme });
+        this.emit();
         break;
       case "clearLog":
         this.log = [];
@@ -378,6 +412,27 @@ export class Controller {
       }
     }
     if (forward.rumble) this.writeRumbleLine(roll, visibility, at, subject);
+    if (forward.dddice && visibility === "everyone") this.rollInDddice(roll, subject);
+  }
+
+  /**
+   * Roll the same faces as 3D dice in the room's dddice room, as this
+   * player. Only Everyone rolls: dddice has no per-viewer visibility we can
+   * map a GM only roll onto without extra round trips. Needs the dddice
+   * extension's room slug and our key from the room metadata.
+   */
+  private rollInDddice(roll: Roll, subject: DeliverySubject): void {
+    const { room, apiKey } = this.dddice;
+    if (!room || !apiKey) {
+      const why = !room
+        ? "No dddice room in this Owlbear room yet: open the dddice extension and pick a room."
+        : "dddice has no key for you yet: open the dddice extension in this room once.";
+      this.deliveryFailed(subject, "dddice", new Error("dddice not set up"), why);
+      return;
+    }
+    void createDddiceRoll(apiKey, dddiceRollRequest(roll, room, this.settings.dddiceTheme), this.fetch).catch((err) =>
+      this.deliveryFailed(subject, "dddice", err, err instanceof Error ? `${err.message}.` : undefined),
+    );
   }
 
   /**

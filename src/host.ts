@@ -26,6 +26,9 @@ export interface Host {
   onBroadcast(channel: string, callback: (data: unknown) => void): () => void;
   /** Merge keys into this player's metadata (how Rumble! takes a chat line). */
   setPlayerMetadata(patch: Record<string, unknown>): Promise<void>;
+  /** The room's shared metadata (where the dddice extension leaves its room and keys). */
+  getRoomMetadata(): Promise<Record<string, unknown>>;
+  onRoomMetadataChange(callback: (metadata: Record<string, unknown>) => void): () => void;
 }
 
 const UNKNOWN_PLAYER: PlayerInfo = { id: "", name: "You", color: null, role: "PLAYER" };
@@ -52,6 +55,8 @@ export function obrHost(): Host {
     broadcast: (channel, data, destination) => OBR.broadcast.sendMessage(channel, data, { destination }),
     onBroadcast: (channel, callback) => OBR.broadcast.onMessage(channel, (event) => callback(event.data)),
     setPlayerMetadata: (patch) => OBR.player.setMetadata(patch),
+    getRoomMetadata: () => OBR.room.getMetadata(),
+    onRoomMetadataChange: (callback) => OBR.room.onMetadataChange(callback),
   };
 }
 
@@ -73,5 +78,7 @@ export function standaloneHost(): Host {
     setPlayerMetadata: async (patch) => {
       console.log(`[DiceVision] standalone: would set player metadata ${Object.keys(patch).join(", ")}`);
     },
+    getRoomMetadata: async () => ({}),
+    onRoomMetadataChange: () => () => {},
   };
 }

@@ -2,7 +2,7 @@
 
 An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://github.com/wor101/dice-vision), an AI-powered physical dice recognition system. Roll real dice in front of a camera and the results show up in your Owlbear Rodeo room for the whole table.
 
-> **Status:** 0.2.1, live at `rodeo.dirtyowlbear.com` and used in live rooms since 0.1.1 (Chrome and Firefox, desktop and phone). 0.2.x adds optional forwarding of rolls into Game Master's Grimoire and Rumble!, checked in a room with both.
+> **Status:** 0.3.0, live at `rodeo.dirtyowlbear.com` and used in live rooms since 0.1.1 (Chrome and Firefox, desktop and phone). 0.2.x added optional forwarding of rolls into Game Master's Grimoire and Rumble!, checked in a room with both; 0.3.0 adds 3D dice through dddice, still to be checked in a room.
 
 ## Requirements
 
@@ -31,7 +31,7 @@ An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://git
 | **Roll once** | Asks DiceVision for your next physical roll. The DiceVision dashboard switches to continuous capture until the roll arrives; click again to cancel. |
 | **Continuous** | Every roll the camera reads is sent, until you turn it off. |
 | **Share rolls with** | **Everyone**, **GM only**, or **Only me**. |
-| **Also send to** | Off by default. **Game Master's Grimoire** puts each roll in that extension's roll log; **Rumble! chat** posts it as a chat line. Only does something if the room has that extension. |
+| **Also send to** | Off by default. **Game Master's Grimoire** puts each roll in that extension's roll log; **Rumble! chat** posts it as a chat line; **dddice 3D dice** rolls the same faces as 3D dice for the whole room. Only does something if the room has that extension. |
 
 Each roll goes into the popover's **Recent rolls** (faces as printed: `00`, pips as their count, DiceVision game labels such as "Critical!" or "Dragon!"), is shared with the room according to your choice, and is announced to the other players as a notification. The DiceVision button shows your latest total as a badge. Other players' rolls appear in your log and as notifications whether or not you have the popover open.
 
@@ -41,14 +41,18 @@ Each roll goes into the popover's **Recent rolls** (faces as printed: `00`, pips
 
 ## Other extensions
 
-Owlbear Rodeo has no roll log or chat of its own, so groups often use [Game Master's Grimoire](https://extensions.owlbear.rodeo/hp-tracker) (HP tracker with a roll log) or [Rumble!](https://extensions.owlbear.rodeo/rumble) (chat). With **Also send to** turned on, each physical roll also lands there, next to the table's virtual rolls, the way the Pixels Dice extension does it:
+Owlbear Rodeo has no roll log, chat or result-taking dice of its own, so groups often use [Game Master's Grimoire](https://extensions.owlbear.rodeo/hp-tracker) (HP tracker with a roll log), [Rumble!](https://extensions.owlbear.rodeo/rumble) (chat) or [dddice](https://extensions.owlbear.rodeo/dddice) (3D dice). With **Also send to** turned on, each physical roll also lands there, next to the table's virtual rolls, the way the Pixels Dice extension does it:
 
 | Extension | How the roll arrives | Everyone | GM only | Only me |
 |-----------|----------------------|----------|---------|---------|
 | Game Master's Grimoire | Its roll-event broadcast, labelled **DiceVision** (game labels become **DiceVision: Critical!**), equation `1d20+2d6`, faces and total | Every client's log | Its whisper channel: the GM's log and yours | Your log only |
 | Rumble! | A chat line from **DiceVision**: `Will rolled 1d20 (17) + 2d6 (4, 3) = 24` (with ` · Critical!` appended for game labels). Rumble! shows such a line only on the client that wrote it, so every client that shows your roll writes its own copy | Everyone's chat | The GM's chat and yours, as a private line | Your chat, as a private line |
 
-Neither extension publishes these shapes; they come from their source, from the Pixels Dice extension and from trying them in a room (`src/forward.ts` documents them). If one of them changes its format, turn the toggle off and [open an issue](https://github.com/wor101/dicevision-owlbear/issues). A roll the camera couldn't fully read is never forwarded. The Rumble! line for someone else's roll follows *their* toggle, not yours: it is their roll, written into your chat on their behalf. Players still on 0.2.0 don't write Rumble! lines for other people's rolls.
+| dddice | Its roll API, with each die's value preset (the physical face), as your dddice user, in the dddice room this Owlbear room is linked to | 3D dice for everyone in the dddice room | Not sent | Not sent |
+
+**3D dice.** Owlbear Rodeo's own Dice extension can't be handed a result (it simulates a throw and reads the face off the mesh), but [dddice](https://extensions.owlbear.rodeo/dddice) can: its API takes a predetermined value per die, and its extension shows every roll of the connected dddice room to everyone. There is nothing to configure on our side: when the dddice extension is set up in the room it records its room and each player's own key in the room, and we use yours. Turn on **dddice 3D dice**; the panel under it says whether the room and your key were found, and lets you pick a dddice theme (a theme slug such as `dddice-bees`; the ones you own are listed on dddice.com). Each player who wants their physical rolls in 3D opens the dddice extension once (an account or a guest both work) and turns the toggle on. The percentile tens die is sent as dddice's `d10x`, and an icon face shows the icon's name on the die.
+
+Neither extension publishes these shapes; they come from their source, from the Pixels Dice extension and from trying them in a room (`src/forward.ts` and `src/dddice.ts` document them). If one of them changes its format, turn the toggle off and [open an issue](https://github.com/wor101/dicevision-owlbear/issues). A roll the camera couldn't fully read is never forwarded. The Rumble! line for someone else's roll follows *their* toggle, not yours: it is their roll, written into your chat on their behalf. Players still on 0.2.0 don't write Rumble! lines for other people's rolls.
 
 ## What it does not do
 

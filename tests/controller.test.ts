@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeClient, type SocketLike } from "../src/bridge-client";
 import { Controller, type ControllerState } from "../src/controller";
+import { DDDICE_API, DDDICE_ROOM_KEY, dddiceKeyFor, type DddiceRollRequest, type FetchLike } from "../src/dddice";
 import { GRIMOIRE_ROLL_CHANNEL, GRIMOIRE_WHISPER_CHANNEL, RUMBLE_CHAT_KEY, type GrimoireRollEntry, type RumbleChatLine } from "../src/forward";
 import type { BroadcastDestination, Host, NotificationVariant } from "../src/host";
 import { ROLL_CHANNEL, type PlayerInfo, type SharedRoll } from "../src/share";
@@ -43,14 +44,15 @@ interface Failing {
   player?: boolean;
 }
 
-/** A recording Host: notifications, badge, broadcasts, player metadata, and a way to deliver incoming ones. */
-function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {}) {
+/** A recording Host: notifications, badge, broadcasts, player metadata, room metadata, and a way to deliver incoming ones. */
+function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {}, room: Record<string, unknown> = {}) {
   const notifications: { message: string; variant: NotificationVariant }[] = [];
   const badges: (string | undefined)[] = [];
   const broadcasts: { channel: string; data: unknown; destination: BroadcastDestination }[] = [];
   const metadata: Record<string, unknown> = {};
   const metadataWrites: Record<string, unknown>[] = [];
   const subscribers = new Map<string, (data: unknown) => void>();
+  const roomListeners = new Set<(metadata: Record<string, unknown>) => void>();
   const host: Host = {
     available: true,
     getPlayer: async () => {
@@ -74,6 +76,11 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {})
       Object.assign(metadata, patch);
       metadataWrites.push(patch);
     },
+    getRoomMetadata: async () => room,
+    onRoomMetadataChange: (callback) => {
+      roomListeners.add(callback);
+      return () => roomListeners.delete(callback);
+    },
   };
   return {
     host,
@@ -83,7 +90,21 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {})
     metadata,
     metadataWrites,
     deliver: (data: unknown) => subscribers.get(ROLL_CHANNEL)?.(data),
+    /** The room metadata changed (the dddice extension wrote something) */
+    roomChanged: (next: Record<string, unknown>) => {
+      for (const l of roomListeners) l(next);
+    },
   };
+}
+
+/** A fake fetch for the dddice API: records requests, answers as told. */
+function fakeFetch(answer: { ok: boolean; status: number; body?: string } = { ok: true, status: 201 }) {
+  const requests: { url: string; init: { method: string; headers: Record<string, string>; body: string } }[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    requests.push({ url, init });
+    return { ok: answer.ok, status: answer.status, text: async () => answer.body ?? "" };
+  };
+  return { fetch, requests };
 }
 
 function memoryStorage(initial?: string): StorageLike {
@@ -96,10 +117,24 @@ const will: PlayerInfo = { id: "p1", name: "Will", color: "#f00", role: "PLAYER"
 const d20 = (face: string, readable = true) => ({ type: "d20", value: readable ? Number(face) : -1, face, readable });
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-async function setup(opts: { storage?: StorageLike | null; actionOpen?: boolean; player?: PlayerInfo; failing?: Failing } = {}) {
-  const fake = fakeHost(opts.player ?? will, opts.actionOpen ?? false, opts.failing ?? {});
+async function setup(
+  opts: {
+    storage?: StorageLike | null;
+    actionOpen?: boolean;
+    player?: PlayerInfo;
+    failing?: Failing;
+    room?: Record<string, unknown>;
+    fetch?: FetchLike;
+  } = {},
+) {
+  const fake = fakeHost(opts.player ?? will, opts.actionOpen ?? false, opts.failing ?? {}, opts.room ?? {});
   const client = new BridgeClient({ createSocket: () => new FakeSocket() });
-  const controller = new Controller(fake.host, { client, storage: opts.storage === undefined ? memoryStorage() : opts.storage, now: () => new Date("2026-10-25T10:00:00Z") });
+  const controller = new Controller(fake.host, {
+    client,
+    storage: opts.storage === undefined ? memoryStorage() : opts.storage,
+    now: () => new Date("2026-10-25T10:00:00Z"),
+    fetch: opts.fetch,
+  });
   const states: ControllerState[] = [];
   controller.onChange((s) => states.push(s));
   await controller.start();
@@ -380,7 +415,7 @@ describe("Controller: sharing", () => {
     FakeSocket.last.confirm();
     controller.handle({ cmd: "setForward", target: "grimoire", on: true });
     controller.handle({ cmd: "setForward", target: "rumble", on: true });
-    expect(state().settings.forward).toEqual({ grimoire: true, rumble: true });
+    expect(state().settings.forward).toEqual({ grimoire: true, rumble: true, dddice: false });
     controller.setContinuous(true);
 
     FakeSocket.last.receive({ type: "roll", data: { dice: [d20("17"), d20("3")], total: 20, roll_id: "r1" } });
@@ -607,6 +642,95 @@ describe("Controller: sharing", () => {
   });
 });
 
+describe("Controller: dddice", () => {
+  const dddiceRoom = { [DDDICE_ROOM_KEY]: "AbC123", [dddiceKeyFor("p1")]: "key-will", [dddiceKeyFor("p2")]: "key-ana" };
+
+  it("reads the dddice room and our own key from the room metadata, and follows changes", async () => {
+    const { state, roomChanged } = await setup({ room: dddiceRoom });
+    expect(state().dddice).toEqual({ room: "AbC123", hasKey: true });
+    roomChanged({ [DDDICE_ROOM_KEY]: "AbC123", [dddiceKeyFor("p2")]: "key-ana" });
+    expect(state().dddice).toEqual({ room: "AbC123", hasKey: false }); // someone else's key isn't ours
+    roomChanged({});
+    expect(state().dddice).toEqual({ room: null, hasKey: false });
+  });
+
+  it("rolls an Everyone roll in dddice as this player, with the chosen theme", async () => {
+    const api = fakeFetch();
+    const { controller, state, metadataWrites } = await setup({ room: dddiceRoom, fetch: api.fetch });
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    controller.handle({ cmd: "setForward", target: "dddice", on: true });
+    controller.handle({ cmd: "setDddiceTheme", theme: "dddice-red" });
+    controller.setContinuous(true);
+    FakeSocket.last.receive({
+      type: "roll",
+      data: {
+        dice: [d20("17"), { type: "d100", value: 70, face: "70", readable: true }],
+        total: 87,
+        game: { tags: [{ die_index: 0, tone: "good", label: "Critical!" }] },
+      },
+    });
+    await flush();
+    expect(api.requests).toHaveLength(1);
+    expect(api.requests[0].url).toBe(`${DDDICE_API}/roll`);
+    expect(api.requests[0].init.method).toBe("POST");
+    expect(api.requests[0].init.headers.Authorization).toBe("Bearer key-will");
+    expect(JSON.parse(api.requests[0].init.body) as DddiceRollRequest).toEqual({
+      dice: [
+        { type: "d20", theme: "dddice-red", value: 17 },
+        { type: "d10x", theme: "dddice-red", value: 7, value_to_display: "70" },
+      ],
+      room: "AbC123",
+      label: "DiceVision: Critical!",
+    });
+    expect(state().log[0].note).toBeNull();
+    expect(metadataWrites).toHaveLength(0); // Rumble! stayed off
+
+    // GM only: not sent to dddice (and not reported either; the hint says so)
+    controller.setVisibility("gm");
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("3")], total: 3 } });
+    await flush();
+    expect(api.requests).toHaveLength(1);
+    expect(state().notice).toBeNull();
+  });
+
+  it("reports a missing dddice setup with what to do, and a refused roll with dddice's message", async () => {
+    const noRoom = await setup({ fetch: fakeFetch().fetch });
+    noRoom.controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    noRoom.controller.handle({ cmd: "setForward", target: "dddice", on: true });
+    noRoom.controller.setContinuous(true);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("8")], total: 8 } });
+    await flush();
+    expect(noRoom.state().notice?.text).toBe(
+      "Rolled, but sending it to dddice failed. No dddice room in this Owlbear room yet: open the dddice extension and pick a room.",
+    );
+
+    const noKey = await setup({ room: { [DDDICE_ROOM_KEY]: "AbC123" }, fetch: fakeFetch().fetch });
+    noKey.controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    noKey.controller.handle({ cmd: "setForward", target: "dddice", on: true });
+    noKey.controller.setContinuous(true);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("8")], total: 8 } });
+    await flush();
+    expect(noKey.state().notice?.text).toMatch(/dddice has no key for you yet/);
+
+    const refused = fakeFetch({ ok: false, status: 422, body: JSON.stringify({ type: "error", data: { message: "The selected theme is invalid." } }) });
+    const bad = await setup({ room: dddiceRoom, fetch: refused.fetch });
+    bad.controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    bad.controller.handle({ cmd: "setForward", target: "dddice", on: true });
+    bad.controller.setContinuous(true);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("8")], total: 8 } });
+    await flush();
+    expect(bad.state().notice).toEqual({
+      text: "Rolled, but sending it to dddice failed. dddice answered 422: The selected theme is invalid..",
+      tone: "warn",
+    });
+    expect(bad.state().log[0].note).toMatch(/^Couldn't send it to dddice\./);
+  });
+});
+
 describe("Controller: commands", () => {
   it("routes every command", async () => {
     const storage = memoryStorage();
@@ -618,13 +742,17 @@ describe("Controller: commands", () => {
     controller.handle({ cmd: "setVisibility", visibility: "gm" });
     controller.handle({ cmd: "setContinuous", on: true });
     controller.handle({ cmd: "setForward", target: "grimoire", on: true });
+    controller.handle({ cmd: "setDddiceTheme", theme: "  dddice-red " });
     expect(JSON.parse(storage.getItem("com.dirtyowlbear.dicevision/settings")!)).toEqual({
       sessionCode: null,
       autoConnect: false,
       continuous: true,
       visibility: "gm",
-      forward: { grimoire: true, rumble: false },
+      forward: { grimoire: true, rumble: false, dddice: false },
+      dddiceTheme: "dddice-red",
     });
+    controller.handle({ cmd: "setDddiceTheme", theme: "   " });
+    expect(state().settings.dddiceTheme).toBe("dddice-bees"); // back to the default
     controller.handle({ cmd: "connect", code: "XKRM4N7B" });
     expect(state().connection).toBe("connecting");
     controller.handle({ cmd: "disconnect" });

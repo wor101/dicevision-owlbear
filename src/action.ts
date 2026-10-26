@@ -35,6 +35,10 @@ const ui = {
   visibility: el<HTMLSelectElement>("visibility"),
   forwardGrimoire: el<HTMLInputElement>("forward-grimoire"),
   forwardRumble: el<HTMLInputElement>("forward-rumble"),
+  forwardDddice: el<HTMLInputElement>("forward-dddice"),
+  dddiceSetup: el<HTMLDivElement>("dddice-setup"),
+  dddiceStatus: el<HTMLParagraphElement>("dddice-status"),
+  dddiceTheme: el<HTMLInputElement>("dddice-theme"),
   notice: el<HTMLParagraphElement>("notice"),
   noticeClose: el<HTMLButtonElement>("notice-close"),
   log: el<HTMLOListElement>("log"),
@@ -55,6 +59,15 @@ function statusLabel(state: ControllerState): string {
     default:
       return "Not connected";
   }
+}
+
+function dddiceStatus(state: ControllerState): string {
+  if (!state.dddice.roomRead) return "This room's shared data couldn't be read, so dddice can't be found. Reload the room.";
+  if (!state.player.id) return "Your dddice key can be looked up once Owlbear Rodeo reports your player.";
+  if (!state.dddice.room) return "No dddice room here yet. Open the dddice extension in this room and pick a room.";
+  if (!state.dddice.hasKey) return `dddice room ${state.dddice.room} found, but no key for you yet. Open the dddice extension once so it stores your key.`;
+  const only = state.settings.visibility === "everyone" ? "" : " (Everyone rolls only)";
+  return `Rolling in dddice room ${state.dddice.room} as you${only}.`;
 }
 
 function timeLabel(iso: string): string {
@@ -151,6 +164,11 @@ function render(state: ControllerState): void {
   ui.visibility.value = state.settings.visibility;
   ui.forwardGrimoire.checked = state.settings.forward.grimoire;
   ui.forwardRumble.checked = state.settings.forward.rumble;
+  ui.forwardDddice.checked = state.settings.forward.dddice;
+  ui.dddiceSetup.hidden = !state.settings.forward.dddice;
+  ui.dddiceStatus.textContent = dddiceStatus(state);
+  ui.dddiceStatus.dataset.tone = state.dddice.room && state.dddice.hasKey ? "info" : "warn";
+  if (document.activeElement !== ui.dddiceTheme) ui.dddiceTheme.value = state.settings.dddiceTheme;
 
   ui.notice.hidden = !state.notice;
   ui.notice.dataset.tone = state.notice?.tone ?? "info";
@@ -199,6 +217,8 @@ function bind(view: ControllerView): void {
   ui.visibility.addEventListener("change", () => send({ cmd: "setVisibility", visibility: ui.visibility.value as Visibility }));
   ui.forwardGrimoire.addEventListener("change", () => send({ cmd: "setForward", target: "grimoire", on: ui.forwardGrimoire.checked }));
   ui.forwardRumble.addEventListener("change", () => send({ cmd: "setForward", target: "rumble", on: ui.forwardRumble.checked }));
+  ui.forwardDddice.addEventListener("change", () => send({ cmd: "setForward", target: "dddice", on: ui.forwardDddice.checked }));
+  ui.dddiceTheme.addEventListener("change", () => send({ cmd: "setDddiceTheme", theme: ui.dddiceTheme.value }));
   ui.noticeClose.addEventListener("click", () => send({ cmd: "clearNotice" }));
   ui.clearLog.addEventListener("click", () => send({ cmd: "clearLog" }));
 

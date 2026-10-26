@@ -24,7 +24,8 @@ describe("settings", () => {
       autoConnect: false,
       continuous: true,
       visibility: "gm" as const,
-      forward: { grimoire: true, rumble: false },
+      forward: { grimoire: true, rumble: false, dddice: true },
+      dddiceTheme: "dddice-red",
     };
     expect(saveSettings(storage, settings)).toBe(true);
     expect(storage.data.has(SETTINGS_KEY)).toBe(true);
@@ -43,12 +44,14 @@ describe("settings", () => {
       visibility: "self",
     });
     // Settings saved before forwarding existed, and junk in it, read as off
-    expect(parseSettings(JSON.stringify({ forward: "yes" })).forward).toEqual({ grimoire: false, rumble: false });
+    expect(parseSettings(JSON.stringify({ forward: "yes" })).forward).toEqual({ grimoire: false, rumble: false, dddice: false });
+    expect(parseSettings(JSON.stringify({ dddiceTheme: 7 })).dddiceTheme).toBe("dddice-bees");
+    expect(parseSettings(JSON.stringify({ dddiceTheme: " dddice-red " })).dddiceTheme).toBe("dddice-red");
     expect(parseSettings(JSON.stringify({ sessionCode: "XKRM4N7B", forward: null }))).toMatchObject({
       sessionCode: "XKRM4N7B", // a null forward must not cost the rest of the blob
       forward: { grimoire: false, rumble: false },
     });
-    expect(parseSettings(JSON.stringify({ forward: { grimoire: 1, rumble: true } })).forward).toEqual({ grimoire: false, rumble: true });
+    expect(parseSettings(JSON.stringify({ forward: { grimoire: 1, rumble: true } })).forward).toEqual({ grimoire: false, rumble: true, dddice: false });
   });
 
   it("hands out its own copy of the defaults", () => {

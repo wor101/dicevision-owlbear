@@ -6,17 +6,20 @@
  * works without it, the user just re-enters the code.
  *
  * Nothing goes in OBR room metadata (a session code is per player and would
- * be visible to the whole room).
+ * be visible to the whole room); the controller reads room metadata for
+ * dddice's setup but writes nothing there.
  */
 
 export type Visibility = "everyone" | "gm" | "self";
 
-/** Other extensions a roll is also sent to (see forward.ts); each off by default. */
+/** Other extensions a roll is also sent to (see forward.ts, dddice.ts); each off by default. */
 export interface ForwardSettings {
   /** Game Master's Grimoire roll log */
   grimoire: boolean;
   /** Rumble! chat */
   rumble: boolean;
+  /** dddice 3D dice */
+  dddice: boolean;
 }
 
 export type ForwardTarget = keyof ForwardSettings;
@@ -27,6 +30,8 @@ export interface Settings {
   continuous: boolean;
   visibility: Visibility;
   forward: ForwardSettings;
+  /** dddice theme slug the 3D dice are rolled with */
+  dddiceTheme: string;
 }
 
 export const SETTINGS_KEY = "com.dirtyowlbear.dicevision/settings";
@@ -36,7 +41,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoConnect: true,
   continuous: false,
   visibility: "everyone",
-  forward: { grimoire: false, rumble: false },
+  forward: { grimoire: false, rumble: false, dddice: false },
+  dddiceTheme: "dddice-bees",
 };
 
 export interface StorageLike {
@@ -63,7 +69,8 @@ export function parseSettings(raw: string | null): Settings {
     autoConnect: typeof s.autoConnect === "boolean" ? s.autoConnect : DEFAULT_SETTINGS.autoConnect,
     continuous: typeof s.continuous === "boolean" ? s.continuous : DEFAULT_SETTINGS.continuous,
     visibility: VISIBILITIES.includes(s.visibility as Visibility) ? (s.visibility as Visibility) : DEFAULT_SETTINGS.visibility,
-    forward: { grimoire: forward.grimoire === true, rumble: forward.rumble === true },
+    forward: { grimoire: forward.grimoire === true, rumble: forward.rumble === true, dddice: forward.dddice === true },
+    dddiceTheme: typeof s.dddiceTheme === "string" && s.dddiceTheme.trim() ? s.dddiceTheme.trim() : DEFAULT_SETTINGS.dddiceTheme,
   };
 }
 

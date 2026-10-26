@@ -218,6 +218,26 @@ input[type="text"] {
   text-transform: uppercase;
 }
 
+/* A text field that isn't a session code */
+input[type="text"].plain {
+  font-size: 14px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.dddice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.dddice .hint[data-tone="warn"] {
+  color: var(--warn);
+}
+
 input:focus-visible,
 select:focus-visible,
 button:focus-visible {

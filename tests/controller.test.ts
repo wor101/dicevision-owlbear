@@ -728,7 +728,7 @@ describe("Controller: dddice", () => {
     const api = fakeFetch();
     const { controller, state, metadataWrites } = await dddiceSetup({ room: dddiceRoom, fetch: api.fetch });
     controller.handle({ cmd: "setDddiceTheme", theme: "dddice-red" });
-    rollOf([d20("17"), { type: "d100", value: 70, face: "70", readable: true }], 87, {
+    rollOf([d20("17"), { type: "d10", value: 70, face: "70", readable: true }], 87, {
       tags: [{ die_index: 0, tone: "good", label: "Critical!" }],
     });
     await flush();
@@ -845,10 +845,10 @@ describe("Controller: dddice", () => {
   it("reports a die dddice can't show instead of sending it", async () => {
     const api = fakeFetch();
     const { state } = await dddiceSetup({ room: dddiceRoom, fetch: api.fetch });
-    rollOf([{ type: "d100", value: 5, face: "5", readable: true }], 5);
+    rollOf([{ type: "d100", value: 5, face: "5", readable: true }], 5); // a type dddice has, with a face it can't show
     await flush();
     expect(api.requests).toHaveLength(0);
-    expect(state().log[0].note).toBe('Couldn\'t send it to dddice. "5" isn\'t a tens face for a d100.');
+    expect(state().log[0].note).toBe('Couldn\'t send it to dddice. "5" isn\'t a tens face.');
   });
 });
 

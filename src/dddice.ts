@@ -19,8 +19,14 @@
  * `value`, `value_to_display`, `label`; `room`, `label`. For a d10x the SDK
  * says the value ranges 1-10 and the value to display 0-90; we send the
  * tens face divided by ten (10 for "00") as `value` and the printed face as
- * `value_to_display`. Whether dddice pairs 10 with the "00" face the same
- * way is still to be seen in a room. CORS allows our origin (checked
+ * `value_to_display`. DiceVision reports that die as a `d10` with a
+ * two-digit face (bridge docs: `"00"` and `"0"` stay distinct by face), so
+ * the face, not the type, says which d10 is the tens die; sending it as a
+ * plain d10 gets "Die with id: d10 cannot roll value 80" (room check
+ * 2026-10-26). A value-only die from an older dashboard works too, since
+ * readDice derives its face from the value ("70"), though its "00" arrives
+ * as "0" and goes out as a plain d10. Whether dddice pairs 10 with the "00"
+ * face the same way is still to be seen. CORS allows our origin (checked
  * 2026-10-26).
  *
  * Pure functions plus one fetch wrapper with an injectable fetch.
@@ -80,21 +86,27 @@ export interface DddiceRollRequest {
   label: string;
 }
 
+/** A percentile tens face as DiceVision prints it: "00", "10" … "90" (a d10's own faces are "0" … "9"). */
+const TENS_FACE = /^[0-9]0$/;
+
 /**
- * One die for dddice. The tens die of a d100 is dddice's `d10x`: value 1-10
- * with the printed face shown; a d10's "0" face is its 10. An icon face
+ * One die for dddice. DiceVision reports the percentile tens die as a `d10`
+ * whose face is two digits ("00", "30"); that is dddice's `d10x`, value 1-10
+ * with the printed face shown. A d10's "0" face is its 10. An icon face
  * keeps the number it stands for and shows the icon's label. Throws on a
- * die dddice has no type for or a d100 face that isn't a tens face, so the
- * roll is reported instead of sent as nonsense.
+ * die dddice has no type for, or a tens die whose value isn't a multiple of
+ * ten (a `d100`-typed die with a one-digit face), so the roll is reported
+ * instead of sent as nonsense.
  */
 export function dddiceDie(die: PhysicalDie, theme: string): DddiceDie {
-  const type = DDDICE_TYPE[die.type];
+  let type = DDDICE_TYPE[die.type];
   if (!type) throw new Error(`dddice has no ${die.type}`);
   const shown = displayFace(die);
   let value = die.value;
+  if (type === "d10" && TENS_FACE.test(die.face)) type = "d10x";
   if (type === "d10x") {
     value = die.value === 0 ? 10 : die.value / 10;
-    if (!Number.isInteger(value) || value < 1 || value > 10) throw new Error(`"${die.face}" isn't a tens face for a d100`);
+    if (!Number.isInteger(value) || value < 1 || value > 10) throw new Error(`"${die.face}" isn't a tens face`);
   } else if (type === "d10" && value === 0) {
     value = 10;
   }

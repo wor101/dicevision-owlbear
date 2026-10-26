@@ -197,6 +197,7 @@ export class Controller {
     const code = normalizeSessionCode(input);
     if (!code) {
       this.setNotice("That isn't a session code. It has 8 letters and digits, like XKRM-4N7B.", "error");
+      this.emit();
       return;
     }
     this.noDiceShown = false;
@@ -215,6 +216,7 @@ export class Controller {
   rollOnce(): void {
     if (!this.client.isConnected()) {
       this.setNotice("Connect to a DiceVision session first.", "warn");
+      this.emit();
       return;
     }
     if (this.settings.continuous) return;

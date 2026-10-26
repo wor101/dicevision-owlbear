@@ -85,10 +85,14 @@ beforeEach(() => {
 describe("Controller: connecting", () => {
   it("rejects a bad code and saves a good one", async () => {
     const storage = memoryStorage();
-    const { controller, state } = await setup({ storage });
+    const { controller, state, states } = await setup({ storage });
+    const emitted = states.length;
     controller.connect("nope");
     expect(state().notice?.tone).toBe("error");
     expect(state().connection).toBe("disconnected");
+    // The popover only re-renders on an emit, so the message must be pushed, not just stored
+    expect(states.length).toBe(emitted + 1);
+    expect(states.at(-1)?.notice?.tone).toBe("error");
     controller.connect("xkrm-4n7b");
     expect(state().connection).toBe("connecting");
     expect(JSON.parse(storage.getItem("com.dirtyowlbear.dicevision/settings")!).sessionCode).toBe("XKRM4N7B");
@@ -336,8 +340,10 @@ describe("Controller: commands", () => {
     expect(state().connection).toBe("connecting");
     controller.handle({ cmd: "disconnect" });
     expect(state().connection).toBe("disconnected");
+    const emitted = states.length;
     controller.handle({ cmd: "rollOnce" });
     expect(state().notice).not.toBeNull();
+    expect(states.length).toBe(emitted + 1); // "connect first" is pushed to the popover
     controller.handle({ cmd: "clearNotice" });
     expect(state().notice).toBeNull();
   });

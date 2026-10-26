@@ -21,6 +21,13 @@
   color-scheme: dark;
 }
 
+/* The popover shows and hides elements with the `hidden` attribute. Our own
+   `display: flex` rules on .notice, buttons etc. would otherwise outrank the
+   browser's `[hidden] { display: none }`. */
+[hidden] {
+  display: none !important;
+}
+
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --bg: #f2f2f8;

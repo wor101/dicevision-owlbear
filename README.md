@@ -2,7 +2,7 @@
 
 An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://github.com/wor101/dice-vision), an AI-powered physical dice recognition system. Roll real dice in front of a camera and the results show up in your Owlbear Rodeo room for the whole table.
 
-> **Status:** early development (0.1.0). The code is complete for a first version but has not yet been tested in a live Owlbear Rodeo room, and the hosted manifest URL below is not live until the site is deployed.
+> **Status:** 0.2.0, live at `rodeo.dirtyowlbear.com` and used in live rooms since 0.1.1 (Chrome and Firefox, desktop and phone). New in 0.2.0: optional forwarding of rolls into Game Master's Grimoire and Rumble!, still to be checked in a room that has those extensions.
 
 ## Requirements
 
@@ -31,12 +31,24 @@ An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://git
 | **Roll once** | Asks DiceVision for your next physical roll. The DiceVision dashboard switches to continuous capture until the roll arrives; click again to cancel. |
 | **Continuous** | Every roll the camera reads is sent, until you turn it off. |
 | **Share rolls with** | **Everyone**, **GM only**, or **Only me**. |
+| **Also send to** | Off by default. **Game Master's Grimoire** puts each roll in that extension's roll log; **Rumble! chat** posts it as a chat line. Only does something if the room has that extension. |
 
 Each roll goes into the popover's **Recent rolls** (faces as printed: `00`, pips as their count, DiceVision game labels such as "Critical!" or "Dragon!"), is shared with the room according to your choice, and is announced to the other players as a notification. The DiceVision button shows your latest total as a badge. Other players' rolls appear in your log and as notifications whether or not you have the popover open.
 
 - **A die the camera couldn't read** keeps the roll private: the popover names the die ("Couldn't read 1d8") and keeps waiting. Roll it again.
 - **No dice seen:** after Roll once, one notification; in continuous mode nothing (every empty capture would otherwise notify).
 - **GM only** is applied by each receiving client, as with every Owlbear Rodeo dice extension: it hides rolls from players, it doesn't encrypt them.
+
+## Other extensions
+
+Owlbear Rodeo has no roll log or chat of its own, so groups often use [Game Master's Grimoire](https://extensions.owlbear.rodeo/hp-tracker) (HP tracker with a roll log) or [Rumble!](https://extensions.owlbear.rodeo/rumble) (chat). With **Also send to** turned on, each physical roll also lands there, next to the table's virtual rolls, the way the Pixels Dice extension does it:
+
+| Extension | How the roll arrives | Everyone | GM only | Only me |
+|-----------|----------------------|----------|---------|---------|
+| Game Master's Grimoire | Its roll-event broadcast, labelled **DiceVision** (game labels become **DiceVision: Critical!**), equation `1d20+2d6`, faces and total | Every client's log | Its whisper channel: the GM's log and yours | Your log only |
+| Rumble! | A chat line from **DiceVision**: `Will rolled 1d20 (17) + 2d6 (4, 3) = 24` | Everyone's chat | Whispered to you | Whispered to you |
+
+Neither extension publishes these shapes; they come from their source and from the Pixels Dice extension (`src/forward.ts` documents them). If one of them changes its format, turn the toggle off and [open an issue](https://github.com/wor101/dicevision-owlbear/issues). A roll the camera couldn't fully read is never forwarded.
 
 ## What it does not do
 

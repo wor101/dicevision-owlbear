@@ -33,6 +33,8 @@ const ui = {
   rollOnce: el<HTMLButtonElement>("roll-once"),
   continuous: el<HTMLInputElement>("continuous"),
   visibility: el<HTMLSelectElement>("visibility"),
+  forwardGrimoire: el<HTMLInputElement>("forward-grimoire"),
+  forwardRumble: el<HTMLInputElement>("forward-rumble"),
   notice: el<HTMLParagraphElement>("notice"),
   noticeClose: el<HTMLButtonElement>("notice-close"),
   log: el<HTMLOListElement>("log"),
@@ -147,6 +149,8 @@ function render(state: ControllerState): void {
   ui.continuous.checked = state.settings.continuous;
   ui.continuous.disabled = !connected;
   ui.visibility.value = state.settings.visibility;
+  ui.forwardGrimoire.checked = state.settings.forward.grimoire;
+  ui.forwardRumble.checked = state.settings.forward.rumble;
 
   ui.notice.hidden = !state.notice;
   ui.notice.dataset.tone = state.notice?.tone ?? "info";
@@ -192,6 +196,8 @@ function bind(view: ControllerView): void {
   );
   ui.continuous.addEventListener("change", () => send({ cmd: "setContinuous", on: ui.continuous.checked }));
   ui.visibility.addEventListener("change", () => send({ cmd: "setVisibility", visibility: ui.visibility.value as Visibility }));
+  ui.forwardGrimoire.addEventListener("change", () => send({ cmd: "setForward", target: "grimoire", on: ui.forwardGrimoire.checked }));
+  ui.forwardRumble.addEventListener("change", () => send({ cmd: "setForward", target: "rumble", on: ui.forwardRumble.checked }));
   ui.noticeClose.addEventListener("click", () => send({ cmd: "clearNotice" }));
   ui.clearLog.addEventListener("click", () => send({ cmd: "clearLog" }));
 

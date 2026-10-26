@@ -26,6 +26,10 @@ Roll your real dice in front of a camera and the results show up in Owlbear Rode
 
 Choose who sees your rolls: **Everyone**, **GM only**, or **Only me**. Rolls are shared with the clients in your room that have the extension enabled. As with every Owlbear Rodeo dice extension, "GM only" is applied by each receiving client.
 
+**Other extensions**
+
+Turn on **Also send to** and each roll also goes to Game Master's Grimoire's roll log and/or Rumble!'s chat, if your room has them. GM only and Only me rolls stay private there too.
+
 **What it reads**
 
 d4, d6 (numbers and pips), d8, d10 (including percentile tens), d12, d20 and d100. Faces are shown as printed, and game labels from DiceVision ("Critical!", "Dragon!") come along with the roll. A roll the camera couldn't fully read stays in your own log and is not shared; roll again.

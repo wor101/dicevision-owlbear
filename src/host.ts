@@ -9,6 +9,9 @@ import type { PlayerInfo } from "./share";
 
 export type NotificationVariant = "DEFAULT" | "ERROR" | "INFO" | "SUCCESS" | "WARNING";
 
+/** Who a broadcast reaches: the other clients, this client's own iframes, or both. */
+export type BroadcastDestination = "REMOTE" | "LOCAL" | "ALL";
+
 export interface Host {
   /** Whether the page runs inside Owlbear Rodeo. */
   readonly available: boolean;
@@ -18,9 +21,11 @@ export interface Host {
   /** The action button's badge; no text clears it. */
   setBadge(text?: string): Promise<void>;
   isActionOpen(): Promise<boolean>;
-  /** Send to the other clients in the room (not back to this one). */
-  broadcast(channel: string, data: unknown): Promise<void>;
+  /** Send on a broadcast channel; to the other clients only unless told otherwise. */
+  broadcast(channel: string, data: unknown, destination?: BroadcastDestination): Promise<void>;
   onBroadcast(channel: string, callback: (data: unknown) => void): () => void;
+  /** Merge keys into this player's metadata (how Rumble! takes a chat line). */
+  setPlayerMetadata(patch: Record<string, unknown>): Promise<void>;
 }
 
 const UNKNOWN_PLAYER: PlayerInfo = { id: "", name: "You", color: null, role: "PLAYER" };
@@ -44,8 +49,9 @@ export function obrHost(): Host {
       await OBR.action.setBadgeText(text);
     },
     isActionOpen: () => OBR.action.isOpen(),
-    broadcast: (channel, data) => OBR.broadcast.sendMessage(channel, data, { destination: "REMOTE" }),
+    broadcast: (channel, data, destination = "REMOTE") => OBR.broadcast.sendMessage(channel, data, { destination }),
     onBroadcast: (channel, callback) => OBR.broadcast.onMessage(channel, (event) => callback(event.data)),
+    setPlayerMetadata: (patch) => OBR.player.setMetadata(patch),
   };
 }
 
@@ -62,5 +68,6 @@ export function standaloneHost(): Host {
     isActionOpen: async () => true,
     broadcast: async () => {},
     onBroadcast: () => () => {},
+    setPlayerMetadata: async () => {},
   };
 }

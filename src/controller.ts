@@ -16,16 +16,20 @@
  *   shared" and we keep waiting for the reroll.
  * - `no_dice` (the camera saw nothing) gets one notification per Roll once;
  *   nothing in continuous mode, where every empty capture would toast.
+ * - A usable roll is also forwarded to the other extensions turned on in
+ *   settings.forward (Game Master's Grimoire, Rumble!), see forward.ts.
  */
 
 import { BridgeClient, type BridgeEvent, type ConnectionState } from "./bridge-client";
 import { describeRoll, isUsable, readRoll, summarizeTypes, unreadableDice, type Roll } from "./dice";
+import { grimoireMessage, rumbleChatPatch } from "./forward";
 import type { Host } from "./host";
 import { formatSessionCode, normalizeSessionCode } from "./session-code";
 import {
   availableStorage,
   loadSettings,
   saveSettings,
+  type ForwardTarget,
   type Settings,
   type StorageLike,
   type Visibility,
@@ -76,6 +80,7 @@ export type Command =
   | { cmd: "setContinuous"; on: boolean }
   | { cmd: "setVisibility"; visibility: Visibility }
   | { cmd: "setAutoConnect"; on: boolean }
+  | { cmd: "setForward"; target: ForwardTarget; on: boolean }
   | { cmd: "clearLog" }
   | { cmd: "clearNotice" };
 
@@ -182,6 +187,9 @@ export class Controller {
       case "setAutoConnect":
         this.setAutoConnect(command.on);
         break;
+      case "setForward":
+        this.setForward(command.target, command.on);
+        break;
       case "clearLog":
         this.log = [];
         this.emit();
@@ -250,6 +258,11 @@ export class Controller {
 
   setAutoConnect(on: boolean): void {
     this.updateSettings({ autoConnect: on });
+    this.emit();
+  }
+
+  setForward(target: ForwardTarget, on: boolean): void {
+    this.updateSettings({ forward: { ...this.settings.forward, [target]: on } });
     this.emit();
   }
 
@@ -332,6 +345,7 @@ export class Controller {
           this.emit();
         });
       }
+      this.forwardRoll(roll, at);
       void this.host.setBadge(String(roll.total)).catch(() => {});
       void this.notifyIfActionClosed(describeRoll(roll, "You"), "INFO");
     }
@@ -339,6 +353,28 @@ export class Controller {
     // The dashboard dropped its waiting flag when it sent this roll
     if (this.wantsRoll()) this.client.sendWaiting();
     else if (this.client.registered) this.client.sendCancel();
+  }
+
+  /** Send a usable roll to the other extensions turned on in settings. */
+  private forwardRoll(roll: Roll, at: string): void {
+    const { forward, visibility } = this.settings;
+    if (forward.grimoire) {
+      const message = grimoireMessage(roll, this.player, visibility, at);
+      void this.host
+        .broadcast(message.channel, message.data, message.destination)
+        .catch((err) => this.forwardFailed("Game Master's Grimoire", err));
+    }
+    if (forward.rumble) {
+      void this.host
+        .setPlayerMetadata(rumbleChatPatch(roll, this.player, visibility, at))
+        .catch((err) => this.forwardFailed("Rumble!", err));
+    }
+  }
+
+  private forwardFailed(extension: string, err: unknown): void {
+    console.error(`[DiceVision] Failed to send the roll to ${extension}:`, err);
+    this.setNotice(`Rolled, but sending it to ${extension} failed.`, "warn");
+    this.emit();
   }
 
   private onNoDice(): void {

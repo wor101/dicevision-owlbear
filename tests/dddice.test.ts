@@ -10,7 +10,7 @@ import {
   type DddiceRollRequest,
   type FetchLike,
 } from "../src/dddice";
-import type { PhysicalDie, Roll } from "../src/dice";
+import { readDice, type PhysicalDie, type Roll } from "../src/dice";
 
 const die = (type: string, face: string, icon: PhysicalDie["icon"] = null): PhysicalDie => ({
   type,
@@ -54,8 +54,21 @@ describe("dddiceDie", () => {
     expect(dddiceDie(die("d10", "80"), "t")).toEqual({ type: "d10x", theme: "t", value: 8, value_to_display: "80" });
     expect(dddiceDie(die("d10", "00"), "t")).toEqual({ type: "d10x", theme: "t", value: 10, value_to_display: "00" });
     expect(dddiceDie(die("d10", "10"), "t")).toEqual({ type: "d10x", theme: "t", value: 1, value_to_display: "10" });
+    expect(dddiceDie(die("d10", "90"), "t")).toEqual({ type: "d10x", theme: "t", value: 9, value_to_display: "90" });
     // A d100 type, should a client ever send one, is the same die
     expect(dddiceDie(die("d100", "70"), "t")).toEqual({ type: "d10x", theme: "t", value: 7, value_to_display: "70" });
+  });
+
+  it("maps what readDice makes of the bridge's dice, including an older dashboard's value-only die", () => {
+    const [tens, oldTens, oldZero] = readDice([
+      { type: "d10", value: 80, face: "80", readable: true },
+      { type: "d10", value: 70 },
+      { type: "d10", value: 0 },
+    ]);
+    expect(dddiceDie(tens, "t")).toEqual({ type: "d10x", theme: "t", value: 8, value_to_display: "80" });
+    expect(dddiceDie(oldTens, "t")).toEqual({ type: "d10x", theme: "t", value: 7, value_to_display: "70" });
+    // A value-only "00" can't be told from a "0": it goes out as a d10's 10
+    expect(dddiceDie(oldZero, "t")).toEqual({ type: "d10", theme: "t", value: 10, value_to_display: "0" });
   });
 
   it("shows an icon by its label and keeps the number it stands for", () => {

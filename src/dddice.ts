@@ -23,8 +23,11 @@
  * two-digit face (bridge docs: `"00"` and `"0"` stay distinct by face), so
  * the face, not the type, says which d10 is the tens die; sending it as a
  * plain d10 gets "Die with id: d10 cannot roll value 80" (room check
- * 2026-10-26). Whether dddice pairs 10 with the "00" face the same way is
- * still to be seen. CORS allows our origin (checked 2026-10-26).
+ * 2026-10-26). A value-only die from an older dashboard works too, since
+ * readDice derives its face from the value ("70"), though its "00" arrives
+ * as "0" and goes out as a plain d10. Whether dddice pairs 10 with the "00"
+ * face the same way is still to be seen. CORS allows our origin (checked
+ * 2026-10-26).
  *
  * Pure functions plus one fetch wrapper with an injectable fetch.
  */
@@ -91,8 +94,9 @@ const TENS_FACE = /^[0-9]0$/;
  * whose face is two digits ("00", "30"); that is dddice's `d10x`, value 1-10
  * with the printed face shown. A d10's "0" face is its 10. An icon face
  * keeps the number it stands for and shows the icon's label. Throws on a
- * die dddice has no type for, so the roll is reported instead of sent as
- * nonsense.
+ * die dddice has no type for, or a tens die whose value isn't a multiple of
+ * ten (a `d100`-typed die with a one-digit face), so the roll is reported
+ * instead of sent as nonsense.
  */
 export function dddiceDie(die: PhysicalDie, theme: string): DddiceDie {
   let type = DDDICE_TYPE[die.type];

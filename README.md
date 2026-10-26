@@ -46,7 +46,7 @@ Owlbear Rodeo has no roll log or chat of its own, so groups often use [Game Mast
 | Extension | How the roll arrives | Everyone | GM only | Only me |
 |-----------|----------------------|----------|---------|---------|
 | Game Master's Grimoire | Its roll-event broadcast, labelled **DiceVision** (game labels become **DiceVision: Critical!**), equation `1d20+2d6`, faces and total | Every client's log | Its whisper channel: the GM's log and yours | Your log only |
-| Rumble! | A chat line from **DiceVision**: `Will rolled 1d20 (17) + 2d6 (4, 3) = 24` | Everyone's chat | Whispered to you | Whispered to you |
+| Rumble! | A chat line from **DiceVision**: `Will rolled 1d20 (17) + 2d6 (4, 3) = 24` (with ` · Critical!` appended for game labels) | Everyone's chat | Whispered to you | Whispered to you |
 
 Neither extension publishes these shapes; they come from their source and from the Pixels Dice extension (`src/forward.ts` documents them). If one of them changes its format, turn the toggle off and [open an issue](https://github.com/wor101/dicevision-owlbear/issues). A roll the camera couldn't fully read is never forwarded.
 

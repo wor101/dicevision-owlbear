@@ -44,6 +44,10 @@ describe("settings", () => {
     });
     // Settings saved before forwarding existed, and junk in it, read as off
     expect(parseSettings(JSON.stringify({ forward: "yes" })).forward).toEqual({ grimoire: false, rumble: false });
+    expect(parseSettings(JSON.stringify({ sessionCode: "XKRM4N7B", forward: null }))).toMatchObject({
+      sessionCode: "XKRM4N7B", // a null forward must not cost the rest of the blob
+      forward: { grimoire: false, rumble: false },
+    });
     expect(parseSettings(JSON.stringify({ forward: { grimoire: 1, rumble: true } })).forward).toEqual({ grimoire: false, rumble: true });
   });
 

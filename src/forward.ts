@@ -8,15 +8,16 @@
  *
  * - Game Master's Grimoire (kamejosh/owlbear-hp-tracker): its background
  *   page listens on `<id>.roll-event` and adds the message to its roll log as
- *   it is (`RollLogEntryType`, deduplicated by `uuid`); `<id>.roll-event-whisper`
- *   is shown only by the roller's own client and GMs. Grimoire itself
- *   broadcasts REMOTE and adds its own entry locally; we have no entry of our
- *   own there, so we send to ALL and every client's Grimoire adds it once.
+ *   it is (`RollLogEntryType`, deduplicated by `uuid`), popping the log open
+ *   for a few seconds; `<id>.roll-event-whisper` is shown only by the
+ *   roller's own client and GMs. Grimoire itself broadcasts REMOTE and adds
+ *   its own entry locally; we have no entry of our own there, so we send to
+ *   ALL and every client's Grimoire adds it once.
  * - Rumble! (Battle-System chat): a line is a write to the player's own
  *   metadata under `com.battle-system.friends/metadata_chatlog`; Rumble
  *   shows it to everyone (`targetId: "0000"`) or to one player.
  *
- * Pure functions, tested in Node.
+ * No OBR or DOM, tested in Node (only the uuid fallback is non-deterministic).
  */
 
 import { describeRoll, displayFace, type PhysicalDie, type Roll } from "./dice";
@@ -33,15 +34,21 @@ export const RUMBLE_EVERYONE = "0000";
 /** How forwarded rolls are labelled in the other extension */
 export const FORWARD_LABEL = "DiceVision";
 
-/** Grimoire's `RollLogEntryType` (src/context/RollLogContext.tsx there). */
+/**
+ * The fields of Grimoire's `RollLogEntryType` (src/context/RollLogContext.tsx
+ * there) that we fill; `label`, `owlbear_user_id` and `participantUsername`
+ * are optional on its side.
+ */
 export interface GrimoireRollEntry {
   uuid: string;
   created_at: string;
   /** "1d20+2d6"; Grimoire shows it and offers it as a re-roll */
   equation: string;
-  /** "DiceVision" or "DiceVision: Critical!" (Grimoire splits on the colon) */
+  /** "DiceVision" or "DiceVision: Critical!" (Grimoire splits a label with exactly one colon into name and detail) */
   label: string;
+  /** Masks the values and total with "?" in Grimoire's log (the roller can unmask). Always false from us: a private roll is a matter of channel (below), as for Grimoire's own hidden rolls */
   is_hidden: boolean;
+  /** Grimoire's total is a string (or an array, for its spell entries); we send the number as a string */
   total_value: string;
   /** Who rolled, as shown */
   username: string;
@@ -52,9 +59,10 @@ export interface GrimoireRollEntry {
 }
 
 export interface GrimoireMessage {
-  channel: string;
+  channel: typeof GRIMOIRE_ROLL_CHANNEL | typeof GRIMOIRE_WHISPER_CHANNEL;
   data: GrimoireRollEntry;
-  destination: BroadcastDestination;
+  /** Never REMOTE: our own Grimoire has no entry of its own, so it must receive this too */
+  destination: Exclude<BroadcastDestination, "REMOTE">;
 }
 
 /** Rumble!'s chat line (the value under RUMBLE_CHAT_KEY in player metadata). */
@@ -112,7 +120,12 @@ export function grimoireMessage(roll: Roll, player: PlayerInfo, visibility: Visi
  * whispers to one player at most, so anything not shared with everyone goes
  * to the roller alone.
  */
-export function rumbleChatPatch(roll: Roll, player: PlayerInfo, visibility: Visibility, at: string): Record<string, RumbleChatLine> {
+export function rumbleChatPatch(
+  roll: Roll,
+  player: PlayerInfo,
+  visibility: Visibility,
+  at: string,
+): Record<typeof RUMBLE_CHAT_KEY, RumbleChatLine> {
   return {
     [RUMBLE_CHAT_KEY]: {
       chatlog: describeRoll(roll, player.name),

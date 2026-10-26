@@ -71,6 +71,18 @@ describe("grimoireMessage", () => {
     expect(a.uuid).not.toBe(b.uuid); // no roll id: each message gets its own
   });
 
+  it("joins distinct tag labels into the label", () => {
+    const two: Roll = {
+      ...roll,
+      tags: [
+        { die_index: 0, tone: "good", label: "Critical!" },
+        { die_index: 1, tone: "bad", label: "Fumble!" },
+        { die_index: 2, tone: "bad", label: "Fumble!" },
+      ],
+    };
+    expect(grimoireMessage(two, will, "everyone", at).data.label).toBe(`${FORWARD_LABEL}: Critical!, Fumble!`);
+  });
+
   it("follows the visibility: whisper channel for GM only and Only me", () => {
     const gm = grimoireMessage(roll, will, "gm", at);
     expect(gm.channel).toBe(GRIMOIRE_WHISPER_CHANNEL);

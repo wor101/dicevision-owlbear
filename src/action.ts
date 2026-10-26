@@ -156,7 +156,8 @@ function render(state: ControllerState): void {
   ui.notice.dataset.tone = state.notice?.tone ?? "info";
   ui.notice.firstChild!.textContent = state.notice?.text ?? "";
 
-  const ids = state.log.map((e) => e.id).join("|");
+  // An entry's note can change after the fact (a delivery failure), so it's part of the key
+  const ids = state.log.map((e) => `${e.id}:${e.note ?? ""}`).join("|");
   if (ids !== lastLogIds) {
     lastLogIds = ids;
     ui.log.replaceChildren(...state.log.map(renderEntry));

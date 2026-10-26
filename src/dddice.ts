@@ -17,17 +17,20 @@
  * Request shape from dddice's OpenAPI spec and SDK docs: `dice[].type`
  * (d4..d20, `d10x` for the percentile tens die), `theme` (a theme slug),
  * `value`, `value_to_display`, `label`; `room`, `label`. For a d10x the SDK
- * says the value ranges 1-10 and the value to display 0-90; we send the
- * tens face divided by ten (10 for "00") as `value` and the printed face as
- * `value_to_display`. DiceVision reports that die as a `d10` with a
- * two-digit face (bridge docs: `"00"` and `"0"` stay distinct by face), so
- * the face, not the type, says which d10 is the tens die; sending it as a
- * plain d10 gets "Die with id: d10 cannot roll value 80" (room check
- * 2026-10-26). A value-only die from an older dashboard works too, since
- * readDice derives its face from the value ("70"), though its "00" arrives
- * as "0" and goes out as a plain d10. Whether dddice pairs 10 with the "00"
- * face the same way is still to be seen. CORS allows our origin (checked
- * 2026-10-26).
+ * says the value ranges 1-10 and the value to display 0-90; dddice's own
+ * integrations (dddice-browser-extension `convertD100toD10x`, and the SDK's
+ * notation parser) send the tens face divided by ten as `value`, 10 for the
+ * 00 face, with `value_to_display` "0", "10" … "90"; the SDK's theme face
+ * list for d10x is [10, 20 … 90, 0], so value 10 lands on the 00 face. We
+ * do exactly that. (0.3.1 sent "00" as the display, a string no theme
+ * lists, and the room showed 10 for it; 0.3.2 matches dddice's "0".)
+ * DiceVision reports that die as a `d10` with a two-digit face (bridge
+ * docs: `"00"` and `"0"` stay distinct by face), so the face, not the type,
+ * says which d10 is the tens die; sending it as a plain d10 gets "Die with
+ * id: d10 cannot roll value 80" (room check 2026-10-26). A value-only die
+ * from an older dashboard works too, since readDice derives its face from
+ * the value ("70"), though its "00" arrives as "0" and goes out as a plain
+ * d10. CORS allows our origin (checked 2026-10-26).
  *
  * Pure functions plus one fetch wrapper with an injectable fetch.
  */
@@ -92,8 +95,9 @@ const TENS_FACE = /^[0-9]0$/;
 /**
  * One die for dddice. DiceVision reports the percentile tens die as a `d10`
  * whose face is two digits ("00", "30"); that is dddice's `d10x`, value 1-10
- * with the printed face shown. A d10's "0" face is its 10. An icon face
- * keeps the number it stands for and shows the icon's label. Throws on a
+ * (10 for "00") shown as dddice writes it ("0", "30"). A d10's "0" face is
+ * its 10, shown as 10 the way dddice shows its own. An icon face keeps the
+ * number it stands for and shows the icon's label. Throws on a
  * die dddice has no type for, or a tens die whose value isn't a multiple of
  * ten (a `d100`-typed die with a one-digit face), so the roll is reported
  * instead of sent as nonsense.
@@ -111,8 +115,14 @@ export function dddiceDie(die: PhysicalDie, theme: string): DddiceDie {
     value = 10;
   }
   const out: DddiceDie = { type, theme, value };
-  if (type === "d10x" || shown !== String(value)) out.value_to_display = shown;
-  if (die.icon) out.label = die.icon.label;
+  if (die.icon) {
+    out.value_to_display = shown;
+    out.label = die.icon.label;
+  } else if (type === "d10x") {
+    // dddice's own form for the tens die: "0", "10" … "90" (its themes list the 00 face as 0)
+    out.value_to_display = String(value === 10 ? 0 : value * 10);
+  }
+  // A plain d10's "0" is left to dddice, which shows that face as 10 (its own convention)
   return out;
 }
 

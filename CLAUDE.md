@@ -180,4 +180,4 @@ Host `public/store.md` (it ships in `dist/`), fork `owlbear-rodeo/extensions`, a
 | `docs/integrations/VTT.md` | Bridge protocol shared by every VTT app |
 | `backend/app/routers/bridge.py`, `backend/app/services/bridge_manager.py` | The server side |
 | `backend/app/services/vtt_payload.py` | The roll payload (`dice`, `total`, `roll_id`, `game`) |
-| `frontend/app/components/new/VttQuickSettings.tsx` | The dashboard's bridge picker ("Owlbear Rodeo" option) |
+| `frontend/app/components/new/VttQuickSettings.tsx` | The dashboard's VTT Bridge panel: sessions, the "How to connect" help (has an Owlbear Rodeo line) and the "<app> is waiting" footer; there is no app picker |

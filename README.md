@@ -20,7 +20,7 @@ An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://git
 
 ## Setup
 
-1. Go to [dicevision.dirtyowlbear.com](https://dicevision.dirtyowlbear.com), point a camera (or your phone) at your dice, and create a session under **Settings → VTT Bridge** with the bridge set to **Owlbear Rodeo**.
+1. Go to [dicevision.dirtyowlbear.com](https://dicevision.dirtyowlbear.com), point a camera (or your phone) at your dice, and create a session in the dashboard's **VTT Bridge** panel (or under Settings). The bridge sends rolls to whatever connects with the code, so there is nothing to pick.
 2. Copy the 8-character session code (e.g. `XKRM-4N7B`; the dash is optional).
 3. In your Owlbear Rodeo room, click the **DiceVision** button in the top-left bar and paste the code. **Connect automatically** (on by default) reconnects you the next time you open the room in this browser.
 

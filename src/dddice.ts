@@ -22,8 +22,10 @@
  * notation parser) send the tens face divided by ten as `value`, 10 for the
  * 00 face, with `value_to_display` "0", "10" … "90"; the SDK's theme face
  * list for d10x is [10, 20 … 90, 0], so value 10 lands on the 00 face. We
- * do exactly that. (0.3.1 sent "00" as the display, a string no theme
- * lists, and the room showed 10 for it; 0.3.2 matches dddice's "0".)
+ * do exactly that (an icon face shows its label instead). 0.3.1 sent "00"
+ * as the display, a string no theme lists, and the room showed 10 for it;
+ * 0.3.2 matches dddice's "0", whether that shows 00 in the room is still
+ * to be seen.
  * DiceVision reports that die as a `d10` with a two-digit face (bridge
  * docs: `"00"` and `"0"` stay distinct by face), so the face, not the type,
  * says which d10 is the tens die; sending it as a plain d10 gets "Die with
@@ -112,7 +114,7 @@ export function dddiceDie(die: PhysicalDie, theme: string): DddiceDie {
     value = die.value === 0 ? 10 : die.value / 10;
     if (!Number.isInteger(value) || value < 1 || value > 10) throw new Error(`"${die.face}" isn't a tens face`);
   } else if (type === "d10" && value === 0) {
-    value = 10;
+    value = 10; // no display override below: dddice shows that face as 10, its own convention
   }
   const out: DddiceDie = { type, theme, value };
   if (die.icon) {
@@ -122,7 +124,6 @@ export function dddiceDie(die: PhysicalDie, theme: string): DddiceDie {
     // dddice's own form for the tens die: "0", "10" … "90" (its themes list the 00 face as 0)
     out.value_to_display = String(value === 10 ? 0 : value * 10);
   }
-  // A plain d10's "0" is left to dddice, which shows that face as 10 (its own convention)
   return out;
 }
 

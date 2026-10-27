@@ -62,12 +62,14 @@ describe("dddiceDie", () => {
   });
 
   it("maps what readDice makes of the bridge's dice, including an older dashboard's value-only die", () => {
-    const [tens, oldTens, oldZero] = readDice([
+    const [tens, zeroZero, oldTens, oldZero] = readDice([
       { type: "d10", value: 80, face: "80", readable: true },
+      { type: "d10", value: 0, face: "00", readable: true },
       { type: "d10", value: 70 },
       { type: "d10", value: 0 },
     ]);
     expect(dddiceDie(tens, "t")).toEqual({ type: "d10x", theme: "t", value: 8, value_to_display: "80" });
+    expect(dddiceDie(zeroZero, "t")).toEqual({ type: "d10x", theme: "t", value: 10, value_to_display: "0" });
     expect(dddiceDie(oldTens, "t")).toEqual({ type: "d10x", theme: "t", value: 7, value_to_display: "70" });
     // A value-only "00" can't be told from a "0": it goes out as a d10's 10
     expect(dddiceDie(oldZero, "t")).toEqual({ type: "d10", theme: "t", value: 10 });

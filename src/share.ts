@@ -32,6 +32,12 @@ export interface SharedRoll {
   visibility: "everyone" | "gm";
   roll: Roll;
   sentAt: string;
+  /**
+   * The roller wants this roll in Rumble!'s chat. Rumble! shows a line only
+   * on the client that wrote it, so every client that shows the roll writes
+   * its own copy (forward.ts). Missing in messages from 0.2.0 clients.
+   */
+  rumble: boolean;
 }
 
 export interface PlayerInfo {
@@ -42,7 +48,13 @@ export interface PlayerInfo {
 }
 
 /** The message to broadcast for a roll, or null when it stays private. */
-export function buildShare(roll: Roll, player: PlayerInfo, visibility: Visibility, sentAt: string): SharedRoll | null {
+export function buildShare(
+  roll: Roll,
+  player: PlayerInfo,
+  visibility: Visibility,
+  sentAt: string,
+  rumble = false,
+): SharedRoll | null {
   if (visibility === "self") return null;
   return {
     v: 1,
@@ -52,6 +64,7 @@ export function buildShare(roll: Roll, player: PlayerInfo, visibility: Visibilit
     visibility,
     roll: { dice: roll.dice, total: roll.total, rollId: roll.rollId, tags: roll.tags },
     sentAt,
+    rumble,
   };
 }
 
@@ -82,8 +95,9 @@ export function parseShare(data: unknown): SharedRoll | null {
     playerName: typeof msg.playerName === "string" && msg.playerName.trim() ? msg.playerName.trim().slice(0, 60) : "Someone",
     playerColor: typeof msg.playerColor === "string" ? msg.playerColor : null,
     visibility: msg.visibility,
-    roll: { dice, total, rollId: typeof roll.rollId === "string" ? roll.rollId : null, tags },
+    roll: { dice, total, rollId: typeof roll.rollId === "string" && roll.rollId ? roll.rollId : null, tags },
     sentAt: typeof msg.sentAt === "string" ? msg.sentAt : new Date().toISOString(),
+    rumble: msg.rumble === true,
   };
 }
 

@@ -3,8 +3,11 @@
 # Runs on every push to main; the same thing by hand is `scripts/deploy.sh`.
 #
 # Repository secrets (Settings → Secrets and variables → Actions):
-#   DEPLOY_TARGET       rsync destination, e.g. root@rodeo.dirtyowlbear.com:/var/www/rodeo
-#   DEPLOY_SSH_KEY      private key whose public half is in that user's authorized_keys
+#   DEPLOY_TARGET       rsync destination. The deploy key is restricted on the
+#                       droplet with `command="rrsync /var/www/rodeo"`, so paths
+#                       are relative to the web root: root@rodeo.dirtyowlbear.com:/
+#   DEPLOY_SSH_KEY      private key whose public half is in root's authorized_keys
+#                       (restricted: command="/usr/bin/rrsync /var/www/rodeo",restrict)
 #   DEPLOY_KNOWN_HOSTS  output of `ssh-keyscan rodeo.dirtyowlbear.com` (pins the host key)
 # Without DEPLOY_TARGET the workflow builds and stops, so a fork or a fresh clone
 # of the repo doesn't fail on main.

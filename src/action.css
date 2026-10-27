@@ -21,6 +21,13 @@
   color-scheme: dark;
 }
 
+/* The popover shows and hides elements with the `hidden` attribute. Our own
+   `display: flex` rules on .notice, buttons etc. would otherwise outrank the
+   browser's `[hidden] { display: none }`. */
+[hidden] {
+  display: none !important;
+}
+
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --bg: #f2f2f8;
@@ -62,12 +69,12 @@ body {
   color: var(--text);
 }
 
+/* No min-height: fitHeight (action.ts) measures this element's box to size the popover, so it must be only as tall as its content */
 #app {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  min-height: 100vh;
 }
 
 .visually-hidden {
@@ -170,9 +177,18 @@ h2 {
   justify-content: space-between;
 }
 
-label {
+label,
+.field-label {
   font-size: 13px;
   color: var(--text-2);
+}
+
+.forward {
+  gap: 6px 14px;
+}
+
+.forward .field-label {
+  flex-basis: 100%;
 }
 
 .check {
@@ -200,6 +216,26 @@ input[type="text"] {
   font-size: 16px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+/* A text field that isn't a session code */
+input[type="text"].plain {
+  font-size: 14px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.dddice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.dddice .hint[data-tone="warn"] {
+  color: var(--warn);
 }
 
 input:focus-visible,
@@ -287,6 +323,70 @@ button.ghost {
   min-height: 0;
   line-height: 1;
   font-size: 16px;
+}
+
+/* Settings live behind a disclosure so the panel opens short: status, Roll once, recent rolls. */
+.settings {
+  gap: 0;
+}
+
+.settings summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-height: 24px;
+}
+
+.settings summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+  flex: none;
+  margin-left: 2px;
+}
+
+.settings[open] summary::before {
+  transform: rotate(45deg);
+}
+
+.summary-detail {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 12px;
+  color: var(--text-2);
+  text-align: right;
+}
+
+.settings .group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.settings h3 {
+  font-size: 12px;
+  margin: 0;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .log-card {

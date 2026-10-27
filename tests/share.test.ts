@@ -32,6 +32,16 @@ describe("buildShare", () => {
     expect(parsed).toEqual(share);
     expect(JSON.stringify(share).length).toBeLessThan(16_000);
   });
+
+  it("carries the roller's Rumble! choice; a 0.2.0 message without it reads as off", () => {
+    expect(buildShare(roll, will, "everyone", "t")!.rumble).toBe(false);
+    const share = buildShare(roll, will, "everyone", "t", true)!;
+    expect(parseShare(JSON.parse(JSON.stringify(share)))!.rumble).toBe(true);
+    const withoutFlag: Partial<typeof share> = { ...share };
+    delete withoutFlag.rumble;
+    expect(parseShare(withoutFlag)!.rumble).toBe(false);
+    expect(parseShare({ ...share, rumble: "yes" })!.rumble).toBe(false);
+  });
 });
 
 describe("parseShare", () => {

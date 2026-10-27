@@ -6,16 +6,32 @@
  * works without it, the user just re-enters the code.
  *
  * Nothing goes in OBR room metadata (a session code is per player and would
- * be visible to the whole room).
+ * be visible to the whole room); the controller reads room metadata for
+ * dddice's setup but writes nothing there.
  */
 
 export type Visibility = "everyone" | "gm" | "self";
+
+/** Other extensions a roll is also sent to (see forward.ts, dddice.ts); each off by default. */
+export interface ForwardSettings {
+  /** Game Master's Grimoire roll log */
+  grimoire: boolean;
+  /** Rumble! chat */
+  rumble: boolean;
+  /** dddice 3D dice */
+  dddice: boolean;
+}
+
+export type ForwardTarget = keyof ForwardSettings;
 
 export interface Settings {
   sessionCode: string | null;
   autoConnect: boolean;
   continuous: boolean;
   visibility: Visibility;
+  forward: ForwardSettings;
+  /** dddice theme slug the 3D dice are rolled with */
+  dddiceTheme: string;
 }
 
 export const SETTINGS_KEY = "com.dirtyowlbear.dicevision/settings";
@@ -25,6 +41,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoConnect: true,
   continuous: false,
   visibility: "everyone",
+  forward: { grimoire: false, rumble: false, dddice: false },
+  dddiceTheme: "dddice-bees",
 };
 
 export interface StorageLike {
@@ -36,21 +54,29 @@ const VISIBILITIES: Visibility[] = ["everyone", "gm", "self"];
 
 /** Read a stored settings blob; anything malformed falls back per field. */
 export function parseSettings(raw: string | null): Settings {
-  if (!raw) return { ...DEFAULT_SETTINGS };
+  if (!raw) return defaults();
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return defaults();
   }
-  if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SETTINGS };
+  if (!parsed || typeof parsed !== "object") return defaults();
   const s = parsed as Record<string, unknown>;
+  const forward = s.forward && typeof s.forward === "object" ? (s.forward as Record<string, unknown>) : {};
   return {
     sessionCode: typeof s.sessionCode === "string" && /^[A-Z2-9]{8}$/.test(s.sessionCode) ? s.sessionCode : null,
     autoConnect: typeof s.autoConnect === "boolean" ? s.autoConnect : DEFAULT_SETTINGS.autoConnect,
     continuous: typeof s.continuous === "boolean" ? s.continuous : DEFAULT_SETTINGS.continuous,
     visibility: VISIBILITIES.includes(s.visibility as Visibility) ? (s.visibility as Visibility) : DEFAULT_SETTINGS.visibility,
+    forward: { grimoire: forward.grimoire === true, rumble: forward.rumble === true, dddice: forward.dddice === true },
+    dddiceTheme: typeof s.dddiceTheme === "string" && s.dddiceTheme.trim() ? s.dddiceTheme.trim() : DEFAULT_SETTINGS.dddiceTheme,
   };
+}
+
+/** A fresh copy of the defaults (the nested `forward` must not be shared). */
+function defaults(): Settings {
+  return { ...DEFAULT_SETTINGS, forward: { ...DEFAULT_SETTINGS.forward } };
 }
 
 /** The browser's localStorage if reading and writing it works, else null. */
@@ -68,11 +94,11 @@ export function availableStorage(): StorageLike | null {
 }
 
 export function loadSettings(storage: StorageLike | null): Settings {
-  if (!storage) return { ...DEFAULT_SETTINGS };
+  if (!storage) return defaults();
   try {
     return parseSettings(storage.getItem(SETTINGS_KEY));
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return defaults();
   }
 }
 

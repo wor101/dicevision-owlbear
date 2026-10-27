@@ -1,0 +1,145 @@
+/**
+ * Forwarding a roll into other extensions that keep a roll log or a chat, so
+ * a physical roll sits next to the table's virtual ones. Both are opt-in
+ * (settings.forward) and off by default: they only do anything when the room
+ * has that extension, and neither publishes a spec. The shapes below come
+ * from the extensions' own source and from the Pixels Dice extension, which
+ * forwards its physical rolls the same way:
+ *
+ * - Game Master's Grimoire (kamejosh/owlbear-hp-tracker): its background
+ *   page listens on `<id>.roll-event` and adds the message to its roll log as
+ *   it is (`RollLogEntryType`, deduplicated by `uuid`), popping the log open
+ *   for a few seconds; `<id>.roll-event-whisper` is shown only by the
+ *   roller's own client and GMs. Grimoire itself broadcasts REMOTE and adds
+ *   its own entry locally; we have no entry of our own there, so we send to
+ *   ALL and every client's Grimoire adds it once.
+ * - Rumble! (Battle-System chat): a line is a write to the player's own
+ *   metadata under `com.battle-system.friends/metadata_chatlog`. Rumble!
+ *   shows that line on the writing client only (checked in a room, 0.2.0:
+ *   the roller saw it, nobody else did), which is why Pixels Dice writes it
+ *   on every client that receives its broadcast. We do the same: the roller
+ *   writes its own line, and every other client that shows the shared roll
+ *   writes one too (share.ts carries the roller's choice as `rumble`).
+ *   `targetId` only picks Rumble!'s header: "0000" reads as a party
+ *   message, the client's own player id as a private one ("to You").
+ *
+ * No OBR or DOM, tested in Node (only the uuid fallback is non-deterministic).
+ */
+
+import { describeRoll, displayFace, type PhysicalDie, type Roll } from "./dice";
+import type { BroadcastDestination } from "./host";
+import type { Visibility } from "./settings";
+import type { PlayerInfo } from "./share";
+
+export const GRIMOIRE_ID = "com.bitperfect-software.hp-tracker";
+export const GRIMOIRE_ROLL_CHANNEL = `${GRIMOIRE_ID}.roll-event`;
+export const GRIMOIRE_WHISPER_CHANNEL = `${GRIMOIRE_ID}.roll-event-whisper`;
+export const RUMBLE_CHAT_KEY = "com.battle-system.friends/metadata_chatlog";
+/** Rumble!'s target for a message to the whole room */
+export const RUMBLE_EVERYONE = "0000";
+/** How forwarded rolls are labelled in the other extension */
+export const FORWARD_LABEL = "DiceVision";
+
+/**
+ * The fields of Grimoire's `RollLogEntryType` (src/context/RollLogContext.tsx
+ * there) that we fill; `label`, `owlbear_user_id` and `participantUsername`
+ * are optional on its side.
+ */
+export interface GrimoireRollEntry {
+  uuid: string;
+  created_at: string;
+  /** "1d20+2d6"; Grimoire shows it and offers it as a re-roll */
+  equation: string;
+  /** "DiceVision" or "DiceVision: Critical!" (Grimoire splits a label with exactly one colon into name and detail) */
+  label: string;
+  /** Masks the values and total with "?" in Grimoire's log (the roller can unmask). Always false from us: a private roll is a matter of channel (below), as for Grimoire's own hidden rolls */
+  is_hidden: boolean;
+  /** Grimoire's total is a string (or an array, for its spell entries); we send the number as a string */
+  total_value: string;
+  /** Who rolled, as shown */
+  username: string;
+  /** One face per die, as displayed; Grimoire joins them with ", " */
+  values: string[];
+  owlbear_user_id: string;
+  participantUsername: string;
+}
+
+export interface GrimoireMessage {
+  channel: typeof GRIMOIRE_ROLL_CHANNEL | typeof GRIMOIRE_WHISPER_CHANNEL;
+  data: GrimoireRollEntry;
+  /** Never REMOTE: our own Grimoire has no entry of its own, so it must receive this too */
+  destination: Exclude<BroadcastDestination, "REMOTE">;
+}
+
+/** Rumble!'s chat line (the value under RUMBLE_CHAT_KEY in player metadata). */
+export interface RumbleChatLine {
+  chatlog: string;
+  created: string;
+  sender: string;
+  /** RUMBLE_EVERYONE or a player id */
+  targetId: string;
+}
+
+/** "1d20+2d6": dice grouped by type in the order read, no spaces (Grimoire's own form). */
+export function equation(dice: PhysicalDie[]): string {
+  const groups: { type: string; count: number }[] = [];
+  for (const die of dice) {
+    const group = groups.find((g) => g.type === die.type);
+    if (group) group.count++;
+    else groups.push({ type: die.type, count: 1 });
+  }
+  return groups.map((g) => `${g.count}${g.type}`).join("+");
+}
+
+function newUuid(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+}
+
+/**
+ * The roll as a Grimoire roll-log entry, on the channel and to the clients
+ * its visibility allows: Everyone → the roll channel to all clients; GM only
+ * → the whisper channel to all (shown by GMs and the roller); Only me → the
+ * whisper channel to this client alone.
+ */
+export function grimoireMessage(roll: Roll, player: PlayerInfo, visibility: Visibility, at: string): GrimoireMessage {
+  const labels = [...new Set(roll.tags.map((t) => t.label))];
+  const data: GrimoireRollEntry = {
+    uuid: roll.rollId ?? newUuid(),
+    created_at: at,
+    equation: equation(roll.dice),
+    label: labels.length ? `${FORWARD_LABEL}: ${labels.join(", ")}` : FORWARD_LABEL,
+    is_hidden: false,
+    total_value: String(roll.total),
+    username: player.name,
+    values: roll.dice.map(displayFace),
+    owlbear_user_id: player.id,
+    participantUsername: player.name,
+  };
+  if (visibility === "everyone") return { channel: GRIMOIRE_ROLL_CHANNEL, data, destination: "ALL" };
+  return { channel: GRIMOIRE_WHISPER_CHANNEL, data, destination: visibility === "gm" ? "ALL" : "LOCAL" };
+}
+
+/**
+ * The roll as a Rumble! chat line for this client's own chat, as a
+ * player-metadata patch. `rollerName` is who rolled (us or another player);
+ * `selfId` is this client's player id, the target of a roll that isn't for
+ * everyone (Rumble! then shows it as a private line).
+ */
+export function rumbleChatPatch(
+  roll: Roll,
+  rollerName: string,
+  visibility: Visibility,
+  selfId: string,
+  at: string,
+): Record<typeof RUMBLE_CHAT_KEY, RumbleChatLine> {
+  return {
+    [RUMBLE_CHAT_KEY]: {
+      chatlog: describeRoll(roll, rollerName),
+      created: at,
+      sender: FORWARD_LABEL,
+      targetId: visibility === "everyone" ? RUMBLE_EVERYONE : selfId,
+    },
+  };
+}

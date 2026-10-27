@@ -16,16 +16,27 @@
  *   shared" and we keep waiting for the reroll.
  * - `no_dice` (the camera saw nothing) gets one notification per Roll once;
  *   nothing in continuous mode, where every empty capture would toast.
+ * - A usable roll is also forwarded to the other extensions turned on in
+ *   settings.forward (Game Master's Grimoire, Rumble!), see forward.ts.
+ *   Rumble! lines are per client, so a shared roll whose roller asked for
+ *   Rumble! is written here too (onSharedRoll), whatever our own setting.
+ * - The background page's controller also owns the one-click roll button in
+ *   Owlbear's toolbar (roll-button.ts), kept in step with the state here.
  */
 
 import { BridgeClient, type BridgeEvent, type ConnectionState } from "./bridge-client";
+import { createDddiceRoll, dddiceRollRequest, readDddiceSetup, type DddiceSetup, type FetchLike } from "./dddice";
 import { describeRoll, isUsable, readRoll, summarizeTypes, unreadableDice, type Roll } from "./dice";
+import { grimoireMessage, rumbleChatPatch } from "./forward";
 import type { Host } from "./host";
+import { ROLL_BUTTON_ID, rollButtonSpec, sameSpec, type RollButtonAction, type RollButtonSpec } from "./roll-button";
 import { formatSessionCode, normalizeSessionCode } from "./session-code";
 import {
   availableStorage,
+  DEFAULT_SETTINGS,
   loadSettings,
   saveSettings,
+  type ForwardTarget,
   type Settings,
   type StorageLike,
   type Visibility,
@@ -43,13 +54,28 @@ export interface LogEntry {
   roll: Roll;
   /** Whether the roll went out to the room (false: "Only me", or unusable) */
   shared: boolean;
-  /** Why a roll wasn't shared: "Couldn't read 1d8" */
+  /** Why a roll wasn't shared ("Couldn't read 1d8"), or where it failed to arrive ("Couldn't send it to Rumble!") */
   note: string | null;
 }
 
 export interface Notice {
   text: string;
   tone: "info" | "warn" | "error";
+}
+
+/** Whose roll a delivery was for, named up front so a failure is worded right even after the entry left the log. */
+interface DeliverySubject {
+  entryId: string;
+  mine: boolean;
+  playerName: string;
+}
+
+const PLAYER_UNKNOWN = "Your Owlbear Rodeo player couldn't be read; reload the room.";
+
+/** An error's message as a sentence to append to a failure notice ("...failed. <reason>"). */
+function reasonFrom(err: unknown): string | undefined {
+  if (!(err instanceof Error) || !err.message.trim()) return undefined;
+  return `${err.message.trim().replace(/[.!]+$/, "")}.`;
 }
 
 export interface ControllerState {
@@ -65,6 +91,8 @@ export interface ControllerState {
   player: PlayerInfo;
   log: LogEntry[];
   notice: Notice | null;
+  /** What the dddice extension has set up in this room for us (the key itself stays private); roomRead false = the room couldn't be read */
+  dddice: { room: string | null; hasKey: boolean; roomRead: boolean };
 }
 
 export type Command =
@@ -76,6 +104,8 @@ export type Command =
   | { cmd: "setContinuous"; on: boolean }
   | { cmd: "setVisibility"; visibility: Visibility }
   | { cmd: "setAutoConnect"; on: boolean }
+  | { cmd: "setForward"; target: ForwardTarget; on: boolean }
+  | { cmd: "setDddiceTheme"; theme: string }
   | { cmd: "clearLog" }
   | { cmd: "clearNotice" };
 
@@ -84,6 +114,10 @@ export interface ControllerOptions {
   /** null: no storage; undefined: probe localStorage */
   storage?: StorageLike | null;
   now?: () => Date;
+  /** For the dddice API; defaults to the browser's fetch */
+  fetch?: FetchLike;
+  /** Register the one-click roll button in Owlbear's tool action bar (the background page's controller does) */
+  rollButton?: boolean;
 }
 
 export class Controller {
@@ -91,12 +125,25 @@ export class Controller {
   private readonly client: BridgeClient;
   private readonly storage: StorageLike | null;
   private readonly now: () => Date;
+  private readonly fetch: FetchLike;
   private settings: Settings;
+  private roomMetadata: Record<string, unknown> = {};
+  private dddice: DddiceSetup = { room: null, apiKey: null };
+  /** Whether the room's metadata has been read at least once (a failed start read leaves this false) */
+  private roomRead = false;
+  /** The toolbar roll button as last sent to the host (null until start, after a failed registration, or when removed) */
+  private rollButton: RollButtonSpec | null = null;
+  /** Whether this controller owns the toolbar button (only the background page's does) */
+  private readonly ownsRollButton: boolean;
+  private rollButtonWarned = false;
+  private stopped = false;
   private player: PlayerInfo = { id: "", name: "You", color: null, role: "PLAYER" };
   private rollOncePending = false;
   private noDiceShown = false;
   private reconnectAttempt = 0;
   private log: LogEntry[] = [];
+  /** Where each log entry failed to go ("the room", "Rumble!"); another player's entry can fail on its Rumble! line */
+  private readonly deliveryFailures = new Map<string, string[]>();
   private notice: Notice | null = null;
   private readonly listeners = new Set<(state: ControllerState) => void>();
   private readonly cleanups: (() => void)[] = [];
@@ -107,6 +154,9 @@ export class Controller {
     this.client = options.client ?? new BridgeClient();
     this.storage = options.storage === undefined ? availableStorage() : options.storage;
     this.now = options.now ?? (() => new Date());
+    // Wrapped so `this` is never the Controller: a bare fetch throws "Illegal invocation" when called as a method
+    this.fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+    this.ownsRollButton = options.rollButton ?? false;
     this.settings = loadSettings(this.storage);
   }
 
@@ -118,13 +168,30 @@ export class Controller {
       this.player = await this.host.getPlayer();
     } catch (err) {
       console.warn("[DiceVision] Couldn't read the player:", err);
+      this.setNotice("Couldn't read your Owlbear Rodeo player. Rolls are labelled \"You\" until you reload the room.", "warn");
     }
     this.cleanups.push(
       this.host.onPlayerChange((player) => {
         this.player = player;
+        this.readRoom(this.roomMetadata);
         this.emit();
       }),
     );
+    // Subscribe before the first read so a write during the read isn't missed; a
+    // change that arrives meanwhile is newer than the snapshot and wins.
+    this.cleanups.push(
+      this.host.onRoomMetadataChange((metadata) => {
+        this.readRoom(metadata);
+        this.emit();
+      }),
+    );
+    try {
+      const snapshot = await this.host.getRoomMetadata();
+      if (!this.roomRead) this.readRoom(snapshot);
+    } catch (err) {
+      console.warn("[DiceVision] Couldn't read the room metadata:", err);
+      if (!this.roomRead) this.setNotice("Couldn't read this room's shared data; dddice forwarding won't work until you reload the room.", "warn");
+    }
     if (this.settings.sessionCode && this.settings.autoConnect) {
       this.client.connect(this.settings.sessionCode);
     }
@@ -132,8 +199,53 @@ export class Controller {
   }
 
   stop(): void {
+    this.stopped = true;
     for (const cleanup of this.cleanups.splice(0)) cleanup();
     this.client.disconnect();
+    if (this.rollButton) {
+      this.rollButton = null;
+      void this.host.removeToolAction(ROLL_BUTTON_ID).catch(() => {});
+    }
+  }
+
+  /**
+   * Keep the toolbar button in step with the state: icon and tooltip.
+   * Re-created (same id) only when they change. The click handler itself
+   * never goes stale: it decides from the state at click time, so a click
+   * that lands while a re-creation is still in flight does the right thing.
+   * A failed registration forgets the spec so the next emit retries, and
+   * says so once.
+   */
+  private syncRollButton(state: ControllerState): void {
+    if (!this.ownsRollButton || this.stopped) return;
+    const spec = rollButtonSpec(state);
+    if (sameSpec(this.rollButton, spec)) return;
+    this.rollButton = spec; // optimistic, so emits during the round trip don't re-send
+    const onClick = () => this.runRollButtonAction(rollButtonSpec(this.getState()).action);
+    let pending: Promise<void>;
+    try {
+      pending = this.host.createToolAction({ id: ROLL_BUTTON_ID, icon: spec.icon, label: spec.label, onClick });
+    } catch (err) {
+      pending = Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+    void pending.catch((err) => {
+      console.warn("[DiceVision] Couldn't update the toolbar button:", err);
+      if (this.rollButton === spec) this.rollButton = null; // a later spec's success is left alone
+      if (!this.rollButtonWarned) {
+        this.rollButtonWarned = true;
+        this.setNotice("Couldn't add the roll button to Owlbear's toolbar. Roll once from here instead; it will be retried.", "warn");
+        this.emit(); // one retry right away; a second failure hits the flag above and stops
+      }
+    });
+  }
+
+  private runRollButtonAction(action: RollButtonAction): void {
+    const run: Record<RollButtonAction, () => void> = {
+      rollOnce: () => this.rollOnce(),
+      cancelRollOnce: () => this.cancelRollOnce(),
+      openPopover: () => void this.host.openPopover().catch((err) => console.warn("[DiceVision] Couldn't open the popover:", err)),
+    };
+    run[action]();
   }
 
   onChange(listener: (state: ControllerState) => void): () => void {
@@ -153,7 +265,15 @@ export class Controller {
       player: this.player,
       log: this.log,
       notice: this.notice,
+      dddice: { room: this.dddice.room, hasKey: this.dddice.apiKey !== null, roomRead: this.roomRead },
     };
+  }
+
+  /** Pick up what the dddice extension wrote to the room (its room slug, our API key). */
+  private readRoom(metadata: Record<string, unknown>): void {
+    this.roomMetadata = metadata;
+    this.roomRead = true;
+    this.dddice = readDddiceSetup(metadata, this.player.id);
   }
 
   handle(command: Command): void {
@@ -182,6 +302,13 @@ export class Controller {
       case "setAutoConnect":
         this.setAutoConnect(command.on);
         break;
+      case "setForward":
+        this.setForward(command.target, command.on);
+        break;
+      case "setDddiceTheme":
+        this.updateSettings({ dddiceTheme: command.theme.trim() || DEFAULT_SETTINGS.dddiceTheme });
+        this.emit();
+        break;
       case "clearLog":
         this.log = [];
         this.emit();
@@ -197,6 +324,7 @@ export class Controller {
     const code = normalizeSessionCode(input);
     if (!code) {
       this.setNotice("That isn't a session code. It has 8 letters and digits, like XKRM-4N7B.", "error");
+      this.emit();
       return;
     }
     this.noDiceShown = false;
@@ -215,6 +343,7 @@ export class Controller {
   rollOnce(): void {
     if (!this.client.isConnected()) {
       this.setNotice("Connect to a DiceVision session first.", "warn");
+      this.emit();
       return;
     }
     if (this.settings.continuous) return;
@@ -248,6 +377,11 @@ export class Controller {
 
   setAutoConnect(on: boolean): void {
     this.updateSettings({ autoConnect: on });
+    this.emit();
+  }
+
+  setForward(target: ForwardTarget, on: boolean): void {
+    this.updateSettings({ forward: { ...this.settings.forward, [target]: on } });
     this.emit();
   }
 
@@ -321,15 +455,13 @@ export class Controller {
       this.rollOncePending = false;
       this.noDiceShown = false;
       this.notice = null;
-      const share = buildShare(roll, this.player, this.settings.visibility, at);
-      this.addLogEntry({ at, mine: true, roll, shared: share !== null, note: null });
+      const share = buildShare(roll, this.player, this.settings.visibility, at, this.settings.forward.rumble);
+      const entryId = this.addLogEntry({ at, mine: true, roll, shared: share !== null, note: null });
+      const subject: DeliverySubject = { entryId, mine: true, playerName: this.player.name };
       if (share) {
-        void this.host.broadcast(ROLL_CHANNEL, share).catch((err) => {
-          console.error("[DiceVision] Failed to share the roll:", err);
-          this.setNotice("Rolled, but sharing it with the room failed.", "warn");
-          this.emit();
-        });
+        void this.host.broadcast(ROLL_CHANNEL, share, "REMOTE").catch((err) => this.deliveryFailed(subject, "the room", err));
       }
+      this.forwardRoll(roll, at, subject);
       void this.host.setBadge(String(roll.total)).catch(() => {});
       void this.notifyIfActionClosed(describeRoll(roll, "You"), "INFO");
     }
@@ -337,6 +469,106 @@ export class Controller {
     // The dashboard dropped its waiting flag when it sent this roll
     if (this.wantsRoll()) this.client.sendWaiting();
     else if (this.client.registered) this.client.sendCancel();
+  }
+
+  /** Send our usable roll to the other extensions turned on in settings. */
+  private forwardRoll(roll: Roll, at: string, subject: DeliverySubject): void {
+    const { forward, visibility } = this.settings;
+    if (forward.grimoire) {
+      const unaddressed = this.unaddressed(visibility);
+      if (unaddressed) this.deliveryFailed(subject, "Game Master's Grimoire", new Error("player id unknown"), unaddressed);
+      else {
+        const message = grimoireMessage(roll, this.player, visibility, at);
+        void this.host
+          .broadcast(message.channel, message.data, message.destination)
+          .catch((err) => this.deliveryFailed(subject, "Game Master's Grimoire", err));
+      }
+    }
+    if (forward.rumble) this.writeRumbleLine(roll, visibility, at, subject);
+    if (forward.dddice && visibility === "everyone") this.rollInDddice(roll, subject);
+  }
+
+  /**
+   * Roll the same faces as 3D dice in the room's dddice room, as this
+   * player. Called by forwardRoll for our usable Everyone rolls only:
+   * addressing a GM only roll would need dddice's participant ids, an extra
+   * round trip we don't make. Needs our player id (the key is filed under
+   * it), the dddice extension's room slug and our key from the room
+   * metadata; each missing piece is reported with what to do about it.
+   */
+  private rollInDddice(roll: Roll, subject: DeliverySubject): void {
+    const { room, apiKey } = this.dddice;
+    const why = !this.player.id
+      ? PLAYER_UNKNOWN
+      : !this.roomRead
+        ? "This room's shared data couldn't be read at start; reload the room."
+        : !room
+          ? "No dddice room in this Owlbear room yet: open the dddice extension and pick a room."
+          : !apiKey
+            ? "dddice has no key for you yet: open the dddice extension in this room once."
+            : null;
+    if (why || !room || !apiKey) {
+      this.deliveryFailed(subject, "dddice", new Error("dddice not set up"), why ?? undefined);
+      return;
+    }
+    let request;
+    try {
+      request = dddiceRollRequest(roll, room, this.settings.dddiceTheme);
+    } catch (err) {
+      this.deliveryFailed(subject, "dddice", err, reasonFrom(err));
+      return;
+    }
+    void createDddiceRoll(apiKey, request, this.fetch).catch((err) => this.deliveryFailed(subject, "dddice", err, reasonFrom(err)));
+  }
+
+  /**
+   * Put a roll into this client's own Rumble! chat. Rumble! shows a line only
+   * where it was written, so this runs for our own roll and for every shared
+   * roll whose roller asked for Rumble! (see forward.ts). The subject names
+   * the roller.
+   */
+  private writeRumbleLine(roll: Roll, visibility: Visibility, at: string, subject: DeliverySubject): void {
+    const unaddressed = this.unaddressed(visibility);
+    if (unaddressed) {
+      this.deliveryFailed(subject, "Rumble!", new Error("player id unknown"), unaddressed);
+      return;
+    }
+    void this.host
+      .setPlayerMetadata(rumbleChatPatch(roll, subject.playerName, visibility, this.player.id, at))
+      .catch((err) => this.deliveryFailed(subject, "Rumble!", err));
+  }
+
+  /**
+   * A private roll needs our player id: Grimoire checks `owlbear_user_id` on
+   * its whisper channel and Rumble! uses it as the private line's target.
+   * Without one (getPlayer() failed at start) the roll would be misaddressed,
+   * so the caller reports a failure with this reason instead of sending it.
+   */
+  private unaddressed(visibility: Visibility): string | null {
+    return !this.player.id && visibility !== "everyone" ? PLAYER_UNKNOWN : null;
+  }
+
+  /**
+   * One destination refused a roll that went out to the table: the room
+   * share, Grimoire, this client's Rumble! line, or dddice. Says so on the log entry
+   * (which outlives the notice) and as a notification while the popover is
+   * closed; for our own roll also in the notice, which another player's roll
+   * must not take over. Several failures on one roll add up ("the room and
+   * Rumble!"); a reason the user can act on is appended when there is one.
+   */
+  private deliveryFailed(subject: DeliverySubject, destination: string, err: unknown, reason?: string): void {
+    const { entryId, mine, playerName } = subject;
+    console.error(`[DiceVision] Failed to send roll ${entryId} (${mine ? "ours" : playerName}) to ${destination}:`, err);
+    const failed = [...(this.deliveryFailures.get(entryId) ?? []), destination];
+    this.deliveryFailures.set(entryId, failed);
+    for (const id of this.deliveryFailures.keys()) if (!this.log.some((e) => e.id === id)) this.deliveryFailures.delete(id);
+    const where = failed.length > 1 ? `${failed.slice(0, -1).join(", ")} and ${failed.at(-1)}` : failed[0];
+    const why = reason ? ` ${reason}` : "";
+    this.log = this.log.map((e) => (e.id === entryId ? { ...e, note: `Couldn't send it to ${where}.${why}` } : e));
+    if (mine) this.setNotice(`Rolled, but sending it to ${where} failed.${why}`, "warn");
+    const whose = mine ? "the roll" : `${playerName}'s roll`;
+    void this.notifyIfActionClosed(`DiceVision: sending ${whose} to ${where} failed.${why}`, "WARNING");
+    this.emit();
   }
 
   private onNoDice(): void {
@@ -353,7 +585,7 @@ export class Controller {
     if (!share) return;
     if (share.playerId && share.playerId === this.player.id) return; // our own, already logged
     if (!shouldShow(share, this.player)) return;
-    this.addLogEntry({
+    const entryId = this.addLogEntry({
       at: share.sentAt,
       mine: false,
       roll: share.roll,
@@ -363,6 +595,10 @@ export class Controller {
       playerColor: share.playerColor,
     });
     void this.host.notify(describeRoll(share.roll, share.playerName), "INFO").catch(() => {});
+    // The roller's Rumble! choice, carried out here because Rumble! lines are per client
+    if (share.rumble) {
+      this.writeRumbleLine(share.roll, share.visibility, share.sentAt, { entryId, mine: false, playerName: share.playerName });
+    }
     this.emit();
   }
 
@@ -375,17 +611,20 @@ export class Controller {
     }
   }
 
-  private addLogEntry(entry: Omit<LogEntry, "id" | "playerName" | "playerColor"> & Partial<Pick<LogEntry, "playerName" | "playerColor">>): void {
+  /** @returns the new entry's id */
+  private addLogEntry(entry: Omit<LogEntry, "id" | "playerName" | "playerColor"> & Partial<Pick<LogEntry, "playerName" | "playerColor">>): string {
     this.entryCounter++;
+    const id = `${entry.at}-${this.entryCounter}`;
     this.log = [
       {
-        id: `${entry.at}-${this.entryCounter}`,
+        id,
         playerName: entry.playerName ?? this.player.name,
         playerColor: entry.playerColor ?? this.player.color,
         ...entry,
       },
       ...this.log,
     ].slice(0, MAX_LOG_ENTRIES);
+    return id;
   }
 
   private setNotice(text: string, tone: Notice["tone"]): void {
@@ -399,6 +638,7 @@ export class Controller {
 
   private emit(): void {
     const state = this.getState();
+    this.syncRollButton(state);
     for (const listener of this.listeners) {
       try {
         listener(state);

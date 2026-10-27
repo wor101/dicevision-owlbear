@@ -129,7 +129,7 @@ export function readRoll(data: unknown): Roll {
   return {
     dice,
     total,
-    rollId: typeof record.roll_id === "string" ? record.roll_id : null,
+    rollId: typeof record.roll_id === "string" && record.roll_id ? record.roll_id : null,
     tags: readTags(record.game),
   };
 }

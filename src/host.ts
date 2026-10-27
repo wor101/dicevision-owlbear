@@ -9,6 +9,9 @@ import type { PlayerInfo } from "./share";
 
 export type NotificationVariant = "DEFAULT" | "ERROR" | "INFO" | "SUCCESS" | "WARNING";
 
+/** Who a broadcast reaches: the other clients, this client's own iframes, or both. */
+export type BroadcastDestination = "REMOTE" | "LOCAL" | "ALL";
+
 export interface Host {
   /** Whether the page runs inside Owlbear Rodeo. */
   readonly available: boolean;
@@ -18,9 +21,32 @@ export interface Host {
   /** The action button's badge; no text clears it. */
   setBadge(text?: string): Promise<void>;
   isActionOpen(): Promise<boolean>;
-  /** Send to the other clients in the room (not back to this one). */
-  broadcast(channel: string, data: unknown): Promise<void>;
+  /** Send on a broadcast channel to the given clients. */
+  broadcast(channel: string, data: unknown, destination: BroadcastDestination): Promise<void>;
   onBroadcast(channel: string, callback: (data: unknown) => void): () => void;
+  /** Merge keys into this player's metadata (how Rumble! takes a chat line). */
+  setPlayerMetadata(patch: Record<string, unknown>): Promise<void>;
+  /** The room's shared metadata (where the dddice extension leaves its room and keys). */
+  getRoomMetadata(): Promise<Record<string, unknown>>;
+  onRoomMetadataChange(callback: (metadata: Record<string, unknown>) => void): () => void;
+  /**
+   * A button in the tool action bar (see roll-button.ts). Creating an id
+   * again replaces the SDK's click handler for it; that Owlbear also replaces
+   * the toolbar entry rather than adding one is assumed, to confirm in a room.
+   */
+  createToolAction(action: ToolActionSpec): Promise<void>;
+  removeToolAction(id: string): Promise<void>;
+  /** Open our action popover. */
+  openPopover(): Promise<void>;
+}
+
+export interface ToolActionSpec {
+  id: string;
+  /** Icon URL (site-relative works); one icon, shown with every tool */
+  icon: string;
+  /** Tooltip */
+  label: string;
+  onClick: () => void;
 }
 
 const UNKNOWN_PLAYER: PlayerInfo = { id: "", name: "You", color: null, role: "PLAYER" };
@@ -44,8 +70,15 @@ export function obrHost(): Host {
       await OBR.action.setBadgeText(text);
     },
     isActionOpen: () => OBR.action.isOpen(),
-    broadcast: (channel, data) => OBR.broadcast.sendMessage(channel, data, { destination: "REMOTE" }),
+    broadcast: (channel, data, destination) => OBR.broadcast.sendMessage(channel, data, { destination }),
     onBroadcast: (channel, callback) => OBR.broadcast.onMessage(channel, (event) => callback(event.data)),
+    setPlayerMetadata: (patch) => OBR.player.setMetadata(patch),
+    getRoomMetadata: () => OBR.room.getMetadata(),
+    onRoomMetadataChange: (callback) => OBR.room.onMetadataChange(callback),
+    createToolAction: ({ id, icon, label, onClick }) =>
+      OBR.tool.createAction({ id, icons: [{ icon, label }], onClick: () => onClick() }),
+    removeToolAction: (id) => OBR.tool.removeAction(id),
+    openPopover: () => OBR.action.open(),
   };
 }
 
@@ -60,7 +93,19 @@ export function standaloneHost(): Host {
     },
     setBadge: async () => {},
     isActionOpen: async () => true,
-    broadcast: async () => {},
+    broadcast: async (channel, _data, destination) => {
+      console.log(`[DiceVision] standalone: would broadcast on ${channel} (${destination})`);
+    },
     onBroadcast: () => () => {},
+    setPlayerMetadata: async (patch) => {
+      console.log(`[DiceVision] standalone: would set player metadata ${Object.keys(patch).join(", ")}`);
+    },
+    getRoomMetadata: async () => ({}),
+    onRoomMetadataChange: () => () => {},
+    createToolAction: async ({ label }) => {
+      console.log(`[DiceVision] standalone: would show the toolbar button "${label}"`);
+    },
+    removeToolAction: async () => {},
+    openPopover: async () => {},
   };
 }

@@ -2,7 +2,7 @@
 
 An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://github.com/wor101/dice-vision), an AI-powered physical dice recognition system. Roll real dice in front of a camera and the results show up in your Owlbear Rodeo room for the whole table.
 
-> **Status:** 0.4.0, live at `rodeo.dirtyowlbear.com` and used in live rooms since 0.1.1 (Chrome and Firefox, desktop and phone). 0.2.x added optional forwarding of rolls into Game Master's Grimoire and Rumble!, checked in a room with both; 0.3.x added 3D dice through dddice, checked in a room through 0.3.3. 0.4.0 adds a one-click roll button in Owlbear's toolbar and folds the popover's settings away, still to be seen in a room.
+> **Status:** 0.4.1, live at `rodeo.dirtyowlbear.com` and used in live rooms since 0.1.1 (Chrome and Firefox, desktop and phone). 0.2.x added optional forwarding of rolls into Game Master's Grimoire and Rumble!, checked in a room with both; 0.3.x added 3D dice through dddice, checked in a room through 0.3.3. 0.4.0 added a one-click roll button in Owlbear's toolbar and folded the popover's settings away, checked in a room; 0.4.1 gives the button its icon, the owlbear in a d20.
 
 ## Requirements
 
@@ -28,7 +28,7 @@ An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://git
 
 | Control | What it does |
 |---------|--------------|
-| **The owlbear button** in Owlbear's top toolbar (the row that belongs to the active tool) | The same as Roll once, without opening the popover: click, roll, done. Its face goes startled while it waits; click again to cancel. Before you've connected it opens the popover instead, and in Continuous mode too, since there is nothing to trigger. |
+| **The owlbear-in-a-d20 button** in Owlbear's top toolbar (the row that belongs to the active tool) | The same as Roll once, without opening the popover: click, roll, done. The owlbear goes startled while it waits; click again to cancel. Before you've connected it opens the popover instead, and in Continuous mode too, since there is nothing to trigger. |
 | **Roll once** | Asks DiceVision for your next physical roll. The DiceVision dashboard switches to continuous capture until the roll arrives; click again to cancel. |
 | **Continuous** | Every roll the camera reads is sent, until you turn it off. |
 | **Share rolls with** | **Everyone**, **GM only**, or **Only me**. |

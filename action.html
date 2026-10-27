@@ -21,51 +21,77 @@
         </div>
       </header>
 
-      <section class="card" aria-labelledby="session-heading">
-        <h2 id="session-heading" class="visually-hidden">Session</h2>
-        <label for="code">Session code</label>
-        <div class="row">
-          <input
-            id="code"
-            type="text"
-            inputmode="text"
-            autocomplete="off"
-            autocapitalize="characters"
-            spellcheck="false"
-            maxlength="9"
-            placeholder="XKRM-4N7B"
-            aria-describedby="code-hint"
-          />
-          <button id="paste" type="button" class="ghost" title="Paste a session code">Paste</button>
-        </div>
-        <div class="row">
-          <button id="connect" type="button" class="primary">Connect</button>
-          <button id="disconnect" type="button" class="danger" hidden>Disconnect</button>
-          <label class="check"><input id="auto-connect" type="checkbox" checked /> Connect automatically</label>
-        </div>
-        <p id="code-hint" class="hint">
-          From the DiceVision dashboard: Settings → VTT Bridge, bridge <b>Owlbear Rodeo</b>. The dash is optional.
-        </p>
-        <p id="storage-note" class="hint" hidden>This browser doesn't keep the extension's settings; you'll re-enter the code next time.</p>
-      </section>
-
       <section class="card" aria-labelledby="rolling-heading">
         <h2 id="rolling-heading" class="visually-hidden">Rolling</h2>
         <div class="row">
           <button id="roll-once" type="button" class="primary" disabled>Roll once</button>
           <label class="check"><input id="continuous" type="checkbox" disabled /> Continuous</label>
         </div>
-        <div class="row">
-          <label for="visibility">Share rolls with</label>
-          <select id="visibility">
-            <option value="everyone">Everyone</option>
-            <option value="gm">GM only</option>
-            <option value="self">Only me</option>
-          </select>
-        </div>
+        <p class="hint">Once connected, the owlbear-in-a-d20 button in Owlbear's top toolbar does the same as Roll once without opening this panel (with Continuous on it opens the panel instead).</p>
       </section>
 
       <p id="notice" class="notice" data-tone="info" hidden><span></span><button id="notice-close" type="button" aria-label="Dismiss">×</button></p>
+
+      <details id="settings" class="card settings">
+        <summary>
+          <span class="summary-title">Settings</span>
+          <span id="settings-summary" class="summary-detail"></span>
+        </summary>
+
+        <div class="group" aria-labelledby="session-heading">
+          <h3 id="session-heading">Session</h3>
+          <label for="code">Session code</label>
+          <div class="row">
+            <input
+              id="code"
+              type="text"
+              inputmode="text"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+              maxlength="9"
+              placeholder="XKRM-4N7B"
+              aria-describedby="code-hint"
+            />
+            <button id="paste" type="button" class="ghost" title="Paste a session code">Paste</button>
+          </div>
+          <div class="row">
+            <button id="connect" type="button" class="primary">Connect</button>
+            <button id="disconnect" type="button" class="danger" hidden>Disconnect</button>
+            <label class="check"><input id="auto-connect" type="checkbox" checked /> Connect automatically</label>
+          </div>
+          <p id="code-hint" class="hint">
+            From the DiceVision dashboard's <b>VTT Bridge</b> panel. The dash is optional.
+          </p>
+          <p id="storage-note" class="hint" hidden>This browser doesn't keep the extension's settings; you'll re-enter the code next time.</p>
+        </div>
+
+        <div class="group" aria-labelledby="sharing-heading">
+          <h3 id="sharing-heading">Sharing</h3>
+          <div class="row">
+            <label for="visibility">Share rolls with</label>
+            <select id="visibility">
+              <option value="everyone">Everyone</option>
+              <option value="gm">GM only</option>
+              <option value="self">Only me</option>
+            </select>
+          </div>
+          <div class="row forward" role="group" aria-labelledby="forward-label">
+            <span id="forward-label" class="field-label">Also send to</span>
+            <label class="check"><input id="forward-grimoire" type="checkbox" /> Game Master's Grimoire</label>
+            <label class="check"><input id="forward-rumble" type="checkbox" /> Rumble! chat</label>
+            <label class="check"><input id="forward-dddice" type="checkbox" /> dddice 3D dice</label>
+          </div>
+          <p class="hint">Grimoire and Rumble! do nothing unless the room has them; dddice says so when it isn't set up. GM only and Only me rolls stay private there too (dddice: Everyone rolls only).</p>
+          <div id="dddice-setup" class="dddice" hidden>
+            <p id="dddice-status" class="hint"></p>
+            <div class="row">
+              <label for="dddice-theme">dddice theme</label>
+              <input id="dddice-theme" type="text" class="plain" autocomplete="off" spellcheck="false" maxlength="80" placeholder="dddice-bees" />
+            </div>
+          </div>
+        </div>
+      </details>
 
       <section class="card log-card" aria-labelledby="log-heading">
         <div class="row between">

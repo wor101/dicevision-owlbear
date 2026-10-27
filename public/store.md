@@ -18,13 +18,17 @@ Roll your real dice in front of a camera and the results show up in Owlbear Rode
 
 **Setup**
 
-1. Sign in at [dicevision.dirtyowlbear.com](https://dicevision.dirtyowlbear.com), point a camera (or your phone) at your dice, and create a session under **Settings → VTT Bridge** with the bridge set to **Owlbear Rodeo**.
+1. Sign in at [dicevision.dirtyowlbear.com](https://dicevision.dirtyowlbear.com), point a camera (or your phone) at your dice, and create a session in the dashboard's **VTT Bridge** panel. The bridge sends rolls to whatever connects with the code.
 2. In Owlbear Rodeo, open the DiceVision action in the top-left bar and paste the 8-character session code.
-3. Press **Roll once** and roll, or turn on **Continuous** to send every roll.
+3. Press **Roll once** and roll, or turn on **Continuous** to send every roll. Once connected, the owlbear-in-a-d20 button in Owlbear's top toolbar rolls once without opening the panel (with Continuous on it opens the panel instead).
 
 **Sharing**
 
 Choose who sees your rolls: **Everyone**, **GM only**, or **Only me**. Rolls are shared with the clients in your room that have the extension enabled. As with every Owlbear Rodeo dice extension, "GM only" is applied by each receiving client.
+
+**Other extensions**
+
+Turn on **Also send to** and each roll also goes to Game Master's Grimoire's roll log, Rumble!'s chat and/or dddice (as 3D dice landing on the faces you rolled; Everyone rolls only), if your room has them. GM only and Only me rolls stay private in Grimoire and Rumble! too.
 
 **What it reads**
 

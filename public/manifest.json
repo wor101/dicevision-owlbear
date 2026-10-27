@@ -1,6 +1,6 @@
 {
   "name": "DiceVision",
-  "version": "0.1.0",
+  "version": "0.4.1",
   "manifest_version": 1,
   "author": "DirtyOwlbear Studios",
   "homepage_url": "https://github.com/wor101/dicevision-owlbear",
@@ -11,7 +11,7 @@
     "icon": "/icon.svg",
     "popover": "/action.html",
     "width": 400,
-    "height": 560
+    "height": 380
   },
   "background_url": "/background.html",
   "permissions": [

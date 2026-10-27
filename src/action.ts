@@ -33,6 +33,8 @@ const ui = {
   rollOnce: el<HTMLButtonElement>("roll-once"),
   continuous: el<HTMLInputElement>("continuous"),
   visibility: el<HTMLSelectElement>("visibility"),
+  settings: el<HTMLDetailsElement>("settings"),
+  settingsSummary: el<HTMLSpanElement>("settings-summary"),
   forwardGrimoire: el<HTMLInputElement>("forward-grimoire"),
   forwardRumble: el<HTMLInputElement>("forward-rumble"),
   forwardDddice: el<HTMLInputElement>("forward-dddice"),
@@ -68,6 +70,38 @@ function dddiceStatus(state: ControllerState): string {
   if (!state.dddice.hasKey) return `dddice room ${state.dddice.room} found, but no key for you yet. Open the dddice extension once so it stores your key.`;
   const only = state.settings.visibility === "everyone" ? "" : " (Everyone rolls only)";
   return `Rolling in dddice room ${state.dddice.room} as you${only}.`;
+}
+
+/** One line next to "Settings" while it's folded: the code and where rolls go. */
+function settingsSummary(state: ControllerState): string {
+  const parts: string[] = [];
+  parts.push(state.sessionCode ? formatSessionCode(state.sessionCode) : "no session code");
+  parts.push({ everyone: "everyone", gm: "GM only", self: "only me" }[state.settings.visibility]);
+  const also = [
+    state.settings.forward.grimoire ? "Grimoire" : null,
+    state.settings.forward.rumble ? "Rumble!" : null,
+    state.settings.forward.dddice ? "dddice" : null,
+  ].filter((s): s is string => s !== null);
+  if (also.length) parts.push(`+ ${also.join(", ")}`);
+  return parts.join(" · ");
+}
+
+/**
+ * Size the popover to its content (Owlbear gives it the manifest's height
+ * otherwise): short with settings folded, taller when they're open or the
+ * log grows, within what fits a phone.
+ */
+const MIN_HEIGHT = 260;
+const MAX_HEIGHT = 640;
+let lastHeight = 0;
+function fitHeight(): void {
+  if (!OBR.isAvailable) return;
+  // The page's own scrollHeight is never less than the viewport; the app element's box is the content
+  const content = document.getElementById("app")?.getBoundingClientRect().height ?? 0;
+  const height = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.ceil(content)));
+  if (Math.abs(height - lastHeight) < 4) return;
+  lastHeight = height;
+  void OBR.action.setHeight(height).catch(() => {});
 }
 
 function timeLabel(iso: string): string {
@@ -135,10 +169,18 @@ function renderEntry(entry: LogEntry): HTMLLIElement {
 
 let lastLogIds = "";
 let lastCode: string | null = null;
+let settingsPlaced = false;
 
 function render(state: ControllerState): void {
   const connected = state.connection === "connected";
   const active = state.connection !== "disconnected";
+
+  // First render decides whether settings start open: they do until a session is connecting or connected
+  if (!settingsPlaced) {
+    settingsPlaced = true;
+    ui.settings.open = !active;
+  }
+  ui.settingsSummary.textContent = ui.settings.open ? "" : settingsSummary(state);
 
   ui.statusDot.dataset.state = state.connection;
   ui.statusDot.classList.toggle("waiting", connected && state.waiting);
@@ -184,7 +226,11 @@ function render(state: ControllerState): void {
   ui.clearLog.hidden = state.log.length === 0;
 
   ui.player.textContent = state.player.id ? `${state.player.name} · ${state.player.role === "GM" ? "GM" : "Player"}` : "";
+  lastState = state;
+  requestAnimationFrame(fitHeight);
 }
+
+let lastState: ControllerState | null = null;
 
 function bind(view: ControllerView): void {
   const send = (command: Command) => view.send(command);
@@ -221,6 +267,10 @@ function bind(view: ControllerView): void {
   ui.dddiceTheme.addEventListener("change", () => send({ cmd: "setDddiceTheme", theme: ui.dddiceTheme.value }));
   ui.noticeClose.addEventListener("click", () => send({ cmd: "clearNotice" }));
   ui.clearLog.addEventListener("click", () => send({ cmd: "clearLog" }));
+  ui.settings.addEventListener("toggle", () => {
+    if (lastState) ui.settingsSummary.textContent = ui.settings.open ? "" : settingsSummary(lastState);
+    requestAnimationFrame(fitHeight);
+  });
 
   view.onState(render);
 }

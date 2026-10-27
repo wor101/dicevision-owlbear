@@ -12,7 +12,7 @@ import { obrHost } from "./host";
 import { openBus, serveController } from "./local-bus";
 
 OBR.onReady(() => {
-  const controller = new Controller(obrHost());
+  const controller = new Controller(obrHost(), { rollButton: true });
   const bus = openBus();
   if (bus) serveController(controller, bus);
   else console.warn("[DiceVision] No BroadcastChannel: the popover will run its own connection");

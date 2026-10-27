@@ -27,6 +27,7 @@ import { createDddiceRoll, dddiceRollRequest, readDddiceSetup, type DddiceSetup,
 import { describeRoll, isUsable, readRoll, summarizeTypes, unreadableDice, type Roll } from "./dice";
 import { grimoireMessage, rumbleChatPatch } from "./forward";
 import type { Host } from "./host";
+import { ROLL_BUTTON_ID, rollButtonSpec, sameSpec, type RollButtonSpec } from "./roll-button";
 import { formatSessionCode, normalizeSessionCode } from "./session-code";
 import {
   availableStorage,
@@ -113,6 +114,8 @@ export interface ControllerOptions {
   now?: () => Date;
   /** For the dddice API; defaults to the browser's fetch */
   fetch?: FetchLike;
+  /** Register the one-click roll button in Owlbear's tool action bar (the background page's controller does) */
+  rollButton?: boolean;
 }
 
 export class Controller {
@@ -126,6 +129,10 @@ export class Controller {
   private dddice: DddiceSetup = { room: null, apiKey: null };
   /** Whether the room's metadata has been read at least once (a failed start read leaves this false) */
   private roomRead = false;
+  /** The toolbar roll button as last registered with the host (null until start, or when removed) */
+  private rollButton: RollButtonSpec | null = null;
+  /** Whether this controller owns the toolbar button (only the background page's does) */
+  private readonly ownsRollButton: boolean;
   private player: PlayerInfo = { id: "", name: "You", color: null, role: "PLAYER" };
   private rollOncePending = false;
   private noDiceShown = false;
@@ -145,6 +152,7 @@ export class Controller {
     this.now = options.now ?? (() => new Date());
     // Wrapped so `this` is never the Controller: a bare fetch throws "Illegal invocation" when called as a method
     this.fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+    this.ownsRollButton = options.rollButton ?? false;
     this.settings = loadSettings(this.storage);
   }
 
@@ -189,6 +197,37 @@ export class Controller {
   stop(): void {
     for (const cleanup of this.cleanups.splice(0)) cleanup();
     this.client.disconnect();
+    if (this.rollButton) {
+      this.rollButton = null;
+      void this.host.removeToolAction(ROLL_BUTTON_ID).catch(() => {});
+    }
+  }
+
+  /**
+   * Keep the toolbar button in step with the state: icon, tooltip and what a
+   * click does. Re-created only when one of those changes.
+   */
+  private syncRollButton(state: ControllerState): void {
+    if (!this.ownsRollButton) return;
+    const spec = rollButtonSpec(state);
+    if (sameSpec(this.rollButton, spec)) return;
+    this.rollButton = spec;
+    const onClick = () => {
+      switch (spec.action) {
+        case "rollOnce":
+          this.rollOnce();
+          break;
+        case "cancelRollOnce":
+          this.cancelRollOnce();
+          break;
+        case "openPopover":
+          void this.host.openPopover().catch((err) => console.warn("[DiceVision] Couldn't open the popover:", err));
+          break;
+      }
+    };
+    void this.host
+      .createToolAction({ id: ROLL_BUTTON_ID, icon: spec.icon, label: spec.label, onClick })
+      .catch((err) => console.warn("[DiceVision] Couldn't update the toolbar button:", err));
   }
 
   onChange(listener: (state: ControllerState) => void): () => void {
@@ -581,6 +620,7 @@ export class Controller {
 
   private emit(): void {
     const state = this.getState();
+    this.syncRollButton(state);
     for (const listener of this.listeners) {
       try {
         listener(state);

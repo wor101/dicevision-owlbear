@@ -2,7 +2,7 @@
 
 An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://github.com/wor101/dice-vision), an AI-powered physical dice recognition system. Roll real dice in front of a camera and the results show up in your Owlbear Rodeo room for the whole table.
 
-> **Status:** 0.3.3, live at `rodeo.dirtyowlbear.com` and used in live rooms since 0.1.1 (Chrome and Firefox, desktop and phone). 0.2.x added optional forwarding of rolls into Game Master's Grimoire and Rumble!, checked in a room with both; 0.3.x adds 3D dice through dddice, checked in a room on 0.3.0 and 0.3.1 (0.3.1 to 0.3.3 fixed the percentile tens die step by step; 0.3.3's landing on the 00 face is still to be seen in a room).
+> **Status:** 0.4.0, live at `rodeo.dirtyowlbear.com` and used in live rooms since 0.1.1 (Chrome and Firefox, desktop and phone). 0.2.x added optional forwarding of rolls into Game Master's Grimoire and Rumble!, checked in a room with both; 0.3.x added 3D dice through dddice, checked in a room through 0.3.3. 0.4.0 adds a one-click roll button in Owlbear's toolbar and folds the popover's settings away, still to be seen in a room.
 
 ## Requirements
 
@@ -28,10 +28,13 @@ An [Owlbear Rodeo](https://owlbear.rodeo) extension for [DiceVision](https://git
 
 | Control | What it does |
 |---------|--------------|
+| **The owlbear button** in Owlbear's top toolbar (the row that belongs to the active tool) | The same as Roll once, without opening the popover: click, roll, done. Its face goes startled while it waits; click again to cancel. Before you've connected it opens the popover instead, and in Continuous mode too, since there is nothing to trigger. |
 | **Roll once** | Asks DiceVision for your next physical roll. The DiceVision dashboard switches to continuous capture until the roll arrives; click again to cancel. |
 | **Continuous** | Every roll the camera reads is sent, until you turn it off. |
 | **Share rolls with** | **Everyone**, **GM only**, or **Only me**. |
 | **Also send to** | Off by default. **Game Master's Grimoire** puts each roll in that extension's roll log; **Rumble! chat** posts it as a chat line; **dddice 3D dice** rolls the same faces as 3D dice for the whole room (Everyone rolls only). Grimoire and Rumble! do nothing unless the room has them; dddice says so when it isn't set up. |
+
+The popover opens short: status, Roll once, Continuous and the recent rolls. Everything else (session code, who sees your rolls, the other extensions) is under **Settings**, which starts open until you've connected and shows a one-line summary while folded.
 
 Each roll goes into the popover's **Recent rolls** (faces as printed: `00`, pips as their count, DiceVision game labels such as "Critical!" or "Dragon!"), is shared with the room according to your choice, and is announced to the other players as a notification. The DiceVision button shows your latest total as a badge. Other players' rolls appear in your log and as notifications whether or not you have the popover open.
 

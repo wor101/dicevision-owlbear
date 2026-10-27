@@ -69,7 +69,7 @@ body {
   color: var(--text);
 }
 
-/* No min-height: the popover is sized to this content (action.ts fitHeight), so the page must be as tall as it is */
+/* No min-height: fitHeight (action.ts) measures this element's box to size the popover, so it must be only as tall as its content */
 #app {
   display: flex;
   flex-direction: column;

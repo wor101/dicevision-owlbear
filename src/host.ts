@@ -29,7 +29,11 @@ export interface Host {
   /** The room's shared metadata (where the dddice extension leaves its room and keys). */
   getRoomMetadata(): Promise<Record<string, unknown>>;
   onRoomMetadataChange(callback: (metadata: Record<string, unknown>) => void): () => void;
-  /** A button in the tool action bar (see roll-button.ts); creating an id again replaces it. */
+  /**
+   * A button in the tool action bar (see roll-button.ts). Creating an id
+   * again replaces the SDK's click handler for it; that Owlbear also replaces
+   * the toolbar entry rather than adding one is assumed, to confirm in a room.
+   */
   createToolAction(action: ToolActionSpec): Promise<void>;
   removeToolAction(id: string): Promise<void>;
   /** Open our action popover. */
@@ -38,7 +42,7 @@ export interface Host {
 
 export interface ToolActionSpec {
   id: string;
-  /** Icon URL (site-relative works) */
+  /** Icon URL (site-relative works); one icon, shown with every tool */
   icon: string;
   /** Tooltip */
   label: string;

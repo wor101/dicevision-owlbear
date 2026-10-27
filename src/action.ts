@@ -22,6 +22,7 @@ function el<T extends HTMLElement>(id: string): T {
 }
 
 const ui = {
+  app: el<HTMLElement>("app"),
   statusDot: el<HTMLSpanElement>("status-dot"),
   statusText: el<HTMLSpanElement>("status-text"),
   code: el<HTMLInputElement>("code"),
@@ -89,19 +90,29 @@ function settingsSummary(state: ControllerState): string {
 /**
  * Size the popover to its content (Owlbear gives it the manifest's height
  * otherwise): short with settings folded, taller when they're open or the
- * log grows, within what fits a phone.
+ * log grows, capped at 640 px (whether that fits a phone is the 0.4.0 room
+ * check; above it the page scrolls).
  */
 const MIN_HEIGHT = 260;
 const MAX_HEIGHT = 640;
 let lastHeight = 0;
+let heightWarned = false;
 function fitHeight(): void {
   if (!OBR.isAvailable) return;
   // The page's own scrollHeight is never less than the viewport; the app element's box is the content
-  const content = document.getElementById("app")?.getBoundingClientRect().height ?? 0;
+  const content = ui.app.getBoundingClientRect().height;
+  if (content === 0) return; // no layout yet
   const height = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.ceil(content)));
   if (Math.abs(height - lastHeight) < 4) return;
+  const previous = lastHeight;
   lastHeight = height;
-  void OBR.action.setHeight(height).catch(() => {});
+  void OBR.action.setHeight(height).catch((err) => {
+    lastHeight = previous; // the next render retries
+    if (!heightWarned) {
+      heightWarned = true;
+      console.warn("[DiceVision] Couldn't resize the popover:", err);
+    }
+  });
 }
 
 function timeLabel(iso: string): string {
@@ -175,10 +186,18 @@ function render(state: ControllerState): void {
   const connected = state.connection === "connected";
   const active = state.connection !== "disconnected";
 
-  // First render decides whether settings start open: they do until a session is connecting or connected
+  // Decided once per open, as soon as it's knowable, and never folded by us afterwards: settings start
+  // folded when a session is already connecting or connected, open when none will come on its own
+  // (no saved code, auto-connect off, or the automatic attempt failed with an error).
   if (!settingsPlaced) {
-    settingsPlaced = true;
-    ui.settings.open = !active;
+    const willAutoConnect = state.settings.autoConnect && state.sessionCode !== null;
+    if (active) {
+      settingsPlaced = true;
+      ui.settings.open = false;
+    } else if (!willAutoConnect || state.notice?.tone === "error") {
+      settingsPlaced = true;
+      ui.settings.open = true;
+    }
   }
   ui.settingsSummary.textContent = ui.settings.open ? "" : settingsSummary(state);
 

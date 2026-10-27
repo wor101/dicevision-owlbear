@@ -20,7 +20,7 @@ Roll your real dice in front of a camera and the results show up in Owlbear Rode
 
 1. Sign in at [dicevision.dirtyowlbear.com](https://dicevision.dirtyowlbear.com), point a camera (or your phone) at your dice, and create a session in the dashboard's **VTT Bridge** panel. The bridge sends rolls to whatever connects with the code.
 2. In Owlbear Rodeo, open the DiceVision action in the top-left bar and paste the 8-character session code.
-3. Press **Roll once** and roll, or turn on **Continuous** to send every roll. After that, the owlbear button in Owlbear's top toolbar rolls once without opening the panel.
+3. Press **Roll once** and roll, or turn on **Continuous** to send every roll. Once connected, the owlbear button in Owlbear's top toolbar rolls once without opening the panel (with Continuous on it opens the panel instead).
 
 **Sharing**
 

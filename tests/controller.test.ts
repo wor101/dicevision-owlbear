@@ -3,7 +3,8 @@ import { BridgeClient, type SocketLike } from "../src/bridge-client";
 import { Controller, type ControllerState } from "../src/controller";
 import { DDDICE_API, DDDICE_ROOM_KEY, dddiceKeyFor, type DddiceRollRequest, type FetchLike } from "../src/dddice";
 import { GRIMOIRE_ROLL_CHANNEL, GRIMOIRE_WHISPER_CHANNEL, RUMBLE_CHAT_KEY, type GrimoireRollEntry, type RumbleChatLine } from "../src/forward";
-import type { BroadcastDestination, Host, NotificationVariant } from "../src/host";
+import type { BroadcastDestination, Host, NotificationVariant, ToolActionSpec } from "../src/host";
+import { ROLL_BUTTON_ID, ROLL_ICON, ROLL_WAITING_ICON } from "../src/roll-button";
 import { ROLL_CHANNEL, type PlayerInfo, type SharedRoll } from "../src/share";
 import type { StorageLike } from "../src/settings";
 
@@ -43,6 +44,8 @@ interface Failing {
   channels?: string[];
   player?: boolean;
   room?: boolean;
+  /** Toolbar button registrations are refused (mutable: tests flip it to let a retry succeed) */
+  toolAction?: boolean;
 }
 
 /** A recording Host: notifications, badge, broadcasts, player metadata, room metadata, and a way to deliver incoming ones. */
@@ -55,6 +58,10 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {},
   const subscribers = new Map<string, (data: unknown) => void>();
   const roomListeners = new Set<(metadata: Record<string, unknown>) => void>();
   const playerListeners = new Set<(player: PlayerInfo) => void>();
+  const toolActions = new Map<string, ToolActionSpec>();
+  /** Every registration attempt in order, succeeded or not */
+  const toolActionLog: ToolActionSpec[] = [];
+  const popoverOpens: number[] = [];
   const host: Host = {
     available: true,
     getPlayer: async () => {
@@ -89,6 +96,13 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {},
       roomListeners.add(callback);
       return () => roomListeners.delete(callback);
     },
+    createToolAction: async (action) => {
+      toolActionLog.push(action);
+      if (failing.toolAction) throw new Error("tool action refused");
+      toolActions.set(action.id, action);
+    },
+    removeToolAction: async (id) => void toolActions.delete(id),
+    openPopover: async () => void popoverOpens.push(1),
   };
   return {
     host,
@@ -106,6 +120,12 @@ function fakeHost(player: PlayerInfo, actionOpen = false, failing: Failing = {},
     playerChanged: (next: PlayerInfo) => {
       for (const l of playerListeners) l(next);
     },
+    /** The toolbar buttons currently registered, and every registration in order */
+    toolActions,
+    toolActionLog,
+    popoverOpens,
+    /** The user clicks the toolbar button */
+    clickToolAction: (id: string) => toolActions.get(id)?.onClick(),
   };
 }
 
@@ -137,6 +157,7 @@ async function setup(
     failing?: Failing;
     room?: Record<string, unknown>;
     fetch?: FetchLike;
+    rollButton?: boolean;
   } = {},
 ) {
   const fake = fakeHost(opts.player ?? will, opts.actionOpen ?? false, opts.failing ?? {}, opts.room ?? {});
@@ -146,6 +167,7 @@ async function setup(
     storage: opts.storage === undefined ? memoryStorage() : opts.storage,
     now: () => new Date("2026-10-25T10:00:00Z"),
     fetch: opts.fetch,
+    rollButton: opts.rollButton,
   });
   const states: ControllerState[] = [];
   controller.onChange((s) => states.push(s));
@@ -849,6 +871,134 @@ describe("Controller: dddice", () => {
     await flush();
     expect(api.requests).toHaveLength(0);
     expect(state().log[0].note).toBe('Couldn\'t send it to dddice. "5" isn\'t a tens face.');
+  });
+});
+
+describe("Controller: toolbar roll button", () => {
+  it("is registered only by the controller asked to (the background page's)", async () => {
+    const popover = await setup();
+    expect(popover.toolActions.size).toBe(0);
+    const background = await setup({ rollButton: true });
+    expect([...background.toolActions.keys()]).toEqual([ROLL_BUTTON_ID]);
+    expect(background.toolActions.get(ROLL_BUTTON_ID)).toMatchObject({ icon: ROLL_ICON, label: "DiceVision: connect a session to roll" });
+  });
+
+  it("opens the popover while disconnected, rolls once when connected, cancels while waiting", async () => {
+    const { controller, state, clickToolAction, toolActions, toolActionLog, popoverOpens } = await setup({ rollButton: true });
+    clickToolAction(ROLL_BUTTON_ID);
+    expect(popoverOpens).toHaveLength(1);
+    expect(state().rollOncePending).toBe(false);
+
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    expect(toolActions.get(ROLL_BUTTON_ID)).toMatchObject({ icon: ROLL_ICON, label: "DiceVision: roll once" });
+    clickToolAction(ROLL_BUTTON_ID);
+    expect(state().rollOncePending).toBe(true);
+    expect(FakeSocket.last.types()).toEqual(["waiting"]);
+    expect(toolActions.get(ROLL_BUTTON_ID)).toMatchObject({ icon: ROLL_WAITING_ICON, label: "DiceVision: waiting for your roll (click to cancel)" });
+
+    clickToolAction(ROLL_BUTTON_ID);
+    expect(state().rollOncePending).toBe(false);
+    expect(FakeSocket.last.types()).toEqual(["waiting", "cancel"]);
+    expect(toolActions.get(ROLL_BUTTON_ID)?.label).toBe("DiceVision: roll once");
+
+    // A roll arriving flips it back too
+    clickToolAction(ROLL_BUTTON_ID);
+    FakeSocket.last.receive({ type: "roll", data: { dice: [d20("17")], total: 17 } });
+    expect(toolActions.get(ROLL_BUTTON_ID)?.label).toBe("DiceVision: roll once");
+
+    // Re-created only when icon, label or action change: four specs so far
+    expect(toolActionLog.map((a) => a.label)).toEqual([
+      "DiceVision: connect a session to roll",
+      "DiceVision: roll once",
+      "DiceVision: waiting for your roll (click to cancel)",
+      "DiceVision: roll once",
+      "DiceVision: waiting for your roll (click to cancel)",
+      "DiceVision: roll once",
+    ]);
+  });
+
+  it("sends you to the popover in continuous mode, and goes away on stop for good", async () => {
+    const { controller, clickToolAction, toolActions, toolActionLog, popoverOpens } = await setup({ rollButton: true });
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    controller.setContinuous(true);
+    expect(toolActions.get(ROLL_BUTTON_ID)).toMatchObject({ icon: ROLL_WAITING_ICON, label: "DiceVision: continuous mode is on (open to change)" });
+    clickToolAction(ROLL_BUTTON_ID);
+    expect(popoverOpens).toHaveLength(1);
+    controller.stop();
+    expect(toolActions.size).toBe(0);
+    const attempts = toolActionLog.length;
+    controller.handle({ cmd: "clearNotice" }); // a late command after stop must not bring it back
+    expect(toolActionLog).toHaveLength(attempts);
+  });
+
+  it("a click decides from the state at click time, so a handler registered before a change still does the right thing", async () => {
+    const { controller, state, clickToolAction, toolActionLog } = await setup({ rollButton: true });
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    clickToolAction(ROLL_BUTTON_ID); // roll once → waiting
+    expect(state().rollOncePending).toBe(true);
+    // The SDK keeps the previous handler until the re-creation's round trip completes; a click then
+    // reaches the "roll once" registration, which must cancel, not roll again
+    const stale = toolActionLog.find((a) => a.label === "DiceVision: roll once")!;
+    stale.onClick();
+    expect(state().rollOncePending).toBe(false);
+    expect(FakeSocket.last.types()).toEqual(["waiting", "cancel"]);
+  });
+
+  it("isn't re-created by emits that don't change it", async () => {
+    const { controller, deliver, toolActionLog } = await setup({ rollButton: true });
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    const attempts = toolActionLog.length;
+    deliver({
+      v: 1,
+      playerId: "p2",
+      playerName: "Ana",
+      visibility: "everyone",
+      roll: { dice: [{ type: "d20", value: 17, face: "17", readable: true }], total: 17 },
+      sentAt: "t",
+      rumble: false,
+    });
+    controller.setVisibility("gm");
+    controller.handle({ cmd: "clearNotice" });
+    controller.handle({ cmd: "hello" });
+    expect(toolActionLog).toHaveLength(attempts);
+  });
+
+  it("follows a lost connection", async () => {
+    const { controller, toolActions } = await setup({ rollButton: true });
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    controller.rollOnce();
+    expect(toolActions.get(ROLL_BUTTON_ID)?.label).toBe("DiceVision: waiting for your roll (click to cancel)");
+    FakeSocket.last.onclose?.({ code: 4001, reason: "invalid" });
+    expect(toolActions.get(ROLL_BUTTON_ID)?.label).toBe("DiceVision: connect a session to roll");
+  });
+
+  it("says so once when Owlbear refuses the button, and retries on the next change", async () => {
+    const failing: Failing = { toolAction: true };
+    const { controller, state, states, toolActions, toolActionLog } = await setup({ rollButton: true, failing });
+    await flush();
+    expect(toolActions.size).toBe(0);
+    expect(state().notice?.text).toMatch(/Couldn't add the roll button to Owlbear's toolbar/);
+    expect(toolActionLog).toHaveLength(2); // the first attempt, and the one retry the notice triggers
+    const emitted = states.length;
+
+    // Still failing: a later change tries again, quietly
+    controller.connect("XKRM4N7B");
+    FakeSocket.last.confirm();
+    await flush();
+    expect(toolActionLog.length).toBeGreaterThan(2);
+    expect(state().notice?.text).toMatch(/Connected to DiceVision session/); // not replaced by a second button notice
+    expect(states.length).toBeGreaterThan(emitted);
+
+    // Owlbear relents: the next change registers, and the handler is the live one
+    failing.toolAction = false;
+    controller.rollOnce();
+    await flush();
+    expect(toolActions.get(ROLL_BUTTON_ID)?.label).toBe("DiceVision: waiting for your roll (click to cancel)");
   });
 });
 

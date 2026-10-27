@@ -29,6 +29,24 @@ export interface Host {
   /** The room's shared metadata (where the dddice extension leaves its room and keys). */
   getRoomMetadata(): Promise<Record<string, unknown>>;
   onRoomMetadataChange(callback: (metadata: Record<string, unknown>) => void): () => void;
+  /**
+   * A button in the tool action bar (see roll-button.ts). Creating an id
+   * again replaces the SDK's click handler for it; that Owlbear also replaces
+   * the toolbar entry rather than adding one is assumed, to confirm in a room.
+   */
+  createToolAction(action: ToolActionSpec): Promise<void>;
+  removeToolAction(id: string): Promise<void>;
+  /** Open our action popover. */
+  openPopover(): Promise<void>;
+}
+
+export interface ToolActionSpec {
+  id: string;
+  /** Icon URL (site-relative works); one icon, shown with every tool */
+  icon: string;
+  /** Tooltip */
+  label: string;
+  onClick: () => void;
 }
 
 const UNKNOWN_PLAYER: PlayerInfo = { id: "", name: "You", color: null, role: "PLAYER" };
@@ -57,6 +75,10 @@ export function obrHost(): Host {
     setPlayerMetadata: (patch) => OBR.player.setMetadata(patch),
     getRoomMetadata: () => OBR.room.getMetadata(),
     onRoomMetadataChange: (callback) => OBR.room.onMetadataChange(callback),
+    createToolAction: ({ id, icon, label, onClick }) =>
+      OBR.tool.createAction({ id, icons: [{ icon, label }], onClick: () => onClick() }),
+    removeToolAction: (id) => OBR.tool.removeAction(id),
+    openPopover: () => OBR.action.open(),
   };
 }
 
@@ -80,5 +102,10 @@ export function standaloneHost(): Host {
     },
     getRoomMetadata: async () => ({}),
     onRoomMetadataChange: () => () => {},
+    createToolAction: async ({ label }) => {
+      console.log(`[DiceVision] standalone: would show the toolbar button "${label}"`);
+    },
+    removeToolAction: async () => {},
+    openPopover: async () => {},
   };
 }

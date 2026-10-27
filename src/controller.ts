@@ -20,6 +20,8 @@
  *   settings.forward (Game Master's Grimoire, Rumble!), see forward.ts.
  *   Rumble! lines are per client, so a shared roll whose roller asked for
  *   Rumble! is written here too (onSharedRoll), whatever our own setting.
+ * - The background page's controller also owns the one-click roll button in
+ *   Owlbear's toolbar (roll-button.ts), kept in step with the state here.
  */
 
 import { BridgeClient, type BridgeEvent, type ConnectionState } from "./bridge-client";
@@ -27,6 +29,7 @@ import { createDddiceRoll, dddiceRollRequest, readDddiceSetup, type DddiceSetup,
 import { describeRoll, isUsable, readRoll, summarizeTypes, unreadableDice, type Roll } from "./dice";
 import { grimoireMessage, rumbleChatPatch } from "./forward";
 import type { Host } from "./host";
+import { ROLL_BUTTON_ID, rollButtonSpec, sameSpec, type RollButtonAction, type RollButtonSpec } from "./roll-button";
 import { formatSessionCode, normalizeSessionCode } from "./session-code";
 import {
   availableStorage,
@@ -113,6 +116,8 @@ export interface ControllerOptions {
   now?: () => Date;
   /** For the dddice API; defaults to the browser's fetch */
   fetch?: FetchLike;
+  /** Register the one-click roll button in Owlbear's tool action bar (the background page's controller does) */
+  rollButton?: boolean;
 }
 
 export class Controller {
@@ -126,6 +131,12 @@ export class Controller {
   private dddice: DddiceSetup = { room: null, apiKey: null };
   /** Whether the room's metadata has been read at least once (a failed start read leaves this false) */
   private roomRead = false;
+  /** The toolbar roll button as last sent to the host (null until start, after a failed registration, or when removed) */
+  private rollButton: RollButtonSpec | null = null;
+  /** Whether this controller owns the toolbar button (only the background page's does) */
+  private readonly ownsRollButton: boolean;
+  private rollButtonWarned = false;
+  private stopped = false;
   private player: PlayerInfo = { id: "", name: "You", color: null, role: "PLAYER" };
   private rollOncePending = false;
   private noDiceShown = false;
@@ -145,6 +156,7 @@ export class Controller {
     this.now = options.now ?? (() => new Date());
     // Wrapped so `this` is never the Controller: a bare fetch throws "Illegal invocation" when called as a method
     this.fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+    this.ownsRollButton = options.rollButton ?? false;
     this.settings = loadSettings(this.storage);
   }
 
@@ -187,8 +199,53 @@ export class Controller {
   }
 
   stop(): void {
+    this.stopped = true;
     for (const cleanup of this.cleanups.splice(0)) cleanup();
     this.client.disconnect();
+    if (this.rollButton) {
+      this.rollButton = null;
+      void this.host.removeToolAction(ROLL_BUTTON_ID).catch(() => {});
+    }
+  }
+
+  /**
+   * Keep the toolbar button in step with the state: icon and tooltip.
+   * Re-created (same id) only when they change. The click handler itself
+   * never goes stale: it decides from the state at click time, so a click
+   * that lands while a re-creation is still in flight does the right thing.
+   * A failed registration forgets the spec so the next emit retries, and
+   * says so once.
+   */
+  private syncRollButton(state: ControllerState): void {
+    if (!this.ownsRollButton || this.stopped) return;
+    const spec = rollButtonSpec(state);
+    if (sameSpec(this.rollButton, spec)) return;
+    this.rollButton = spec; // optimistic, so emits during the round trip don't re-send
+    const onClick = () => this.runRollButtonAction(rollButtonSpec(this.getState()).action);
+    let pending: Promise<void>;
+    try {
+      pending = this.host.createToolAction({ id: ROLL_BUTTON_ID, icon: spec.icon, label: spec.label, onClick });
+    } catch (err) {
+      pending = Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+    void pending.catch((err) => {
+      console.warn("[DiceVision] Couldn't update the toolbar button:", err);
+      if (this.rollButton === spec) this.rollButton = null; // a later spec's success is left alone
+      if (!this.rollButtonWarned) {
+        this.rollButtonWarned = true;
+        this.setNotice("Couldn't add the roll button to Owlbear's toolbar. Roll once from here instead; it will be retried.", "warn");
+        this.emit(); // one retry right away; a second failure hits the flag above and stops
+      }
+    });
+  }
+
+  private runRollButtonAction(action: RollButtonAction): void {
+    const run: Record<RollButtonAction, () => void> = {
+      rollOnce: () => this.rollOnce(),
+      cancelRollOnce: () => this.cancelRollOnce(),
+      openPopover: () => void this.host.openPopover().catch((err) => console.warn("[DiceVision] Couldn't open the popover:", err)),
+    };
+    run[action]();
   }
 
   onChange(listener: (state: ControllerState) => void): () => void {
@@ -581,6 +638,7 @@ export class Controller {
 
   private emit(): void {
     const state = this.getState();
+    this.syncRollButton(state);
     for (const listener of this.listeners) {
       try {
         listener(state);

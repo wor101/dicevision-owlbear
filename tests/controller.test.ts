@@ -739,7 +739,7 @@ describe("Controller: dddice", () => {
     expect(JSON.parse(api.requests[0].init.body) as DddiceRollRequest).toEqual({
       dice: [
         { type: "d20", theme: "dddice-red", value: 17 },
-        { type: "d10x", theme: "dddice-red", value: 7, value_to_display: "70" },
+        { type: "d10x", theme: "dddice-red", value: 70, value_to_display: "70" },
       ],
       room: "AbC123",
       label: "DiceVision: Critical!",

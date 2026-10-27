@@ -52,13 +52,13 @@ describe("dddiceDie", () => {
     expect(dddiceDie(die("d10", "0"), "t")).toEqual({ type: "d10", theme: "t", value: 10 });
     expect(dddiceDie(die("d10", "7"), "t")).toEqual({ type: "d10", theme: "t", value: 7 });
     // As DiceVision sends them: type d10, face "80", value 80 (the room check's "cannot roll value 80")
-    expect(dddiceDie(die("d10", "80"), "t")).toEqual({ type: "d10x", theme: "t", value: 8, value_to_display: "80" });
-    // The 00 face: value 10 (dddice's face list ends in 0), shown as "0" the way dddice's own integrations send it
-    expect(dddiceDie(die("d10", "00"), "t")).toEqual({ type: "d10x", theme: "t", value: 10, value_to_display: "0" });
-    expect(dddiceDie(die("d10", "10"), "t")).toEqual({ type: "d10x", theme: "t", value: 1, value_to_display: "10" });
-    expect(dddiceDie(die("d10", "90"), "t")).toEqual({ type: "d10x", theme: "t", value: 9, value_to_display: "90" });
+    expect(dddiceDie(die("d10", "80"), "t")).toEqual({ type: "d10x", theme: "t", value: 80, value_to_display: "80" });
+    // The 00 face: the API takes the face label as the value (0.3.2's value 10 landed the die on the "10" face), shown "0"
+    expect(dddiceDie(die("d10", "00"), "t")).toEqual({ type: "d10x", theme: "t", value: 0, value_to_display: "0" });
+    expect(dddiceDie(die("d10", "10"), "t")).toEqual({ type: "d10x", theme: "t", value: 10, value_to_display: "10" });
+    expect(dddiceDie(die("d10", "90"), "t")).toEqual({ type: "d10x", theme: "t", value: 90, value_to_display: "90" });
     // A d100 type, should a client ever send one, is the same die
-    expect(dddiceDie(die("d100", "70"), "t")).toEqual({ type: "d10x", theme: "t", value: 7, value_to_display: "70" });
+    expect(dddiceDie(die("d100", "70"), "t")).toEqual({ type: "d10x", theme: "t", value: 70, value_to_display: "70" });
   });
 
   it("maps what readDice makes of the bridge's dice, including an older dashboard's value-only die", () => {
@@ -68,9 +68,9 @@ describe("dddiceDie", () => {
       { type: "d10", value: 70 },
       { type: "d10", value: 0 },
     ]);
-    expect(dddiceDie(tens, "t")).toEqual({ type: "d10x", theme: "t", value: 8, value_to_display: "80" });
-    expect(dddiceDie(zeroZero, "t")).toEqual({ type: "d10x", theme: "t", value: 10, value_to_display: "0" });
-    expect(dddiceDie(oldTens, "t")).toEqual({ type: "d10x", theme: "t", value: 7, value_to_display: "70" });
+    expect(dddiceDie(tens, "t")).toEqual({ type: "d10x", theme: "t", value: 80, value_to_display: "80" });
+    expect(dddiceDie(zeroZero, "t")).toEqual({ type: "d10x", theme: "t", value: 0, value_to_display: "0" });
+    expect(dddiceDie(oldTens, "t")).toEqual({ type: "d10x", theme: "t", value: 70, value_to_display: "70" });
     // A value-only "00" can't be told from a "0": it goes out as a d10's 10
     expect(dddiceDie(oldZero, "t")).toEqual({ type: "d10", theme: "t", value: 10 });
   });
@@ -86,7 +86,7 @@ describe("dddiceDie", () => {
     expect(dddiceDie(die("d10", "90", { id: "skull", label: "Skull" }), "t")).toEqual({
       type: "d10x",
       theme: "t",
-      value: 9,
+      value: 90,
       value_to_display: "Skull",
       label: "Skull",
     });

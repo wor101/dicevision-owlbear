@@ -16,16 +16,16 @@
  *
  * Request shape from dddice's OpenAPI spec and SDK docs: `dice[].type`
  * (d4..d20, `d10x` for the percentile tens die), `theme` (a theme slug),
- * `value`, `value_to_display`, `label`; `room`, `label`. For a d10x the SDK
- * says the value ranges 1-10 and the value to display 0-90; dddice's own
- * integrations (dddice-browser-extension `convertD100toD10x`, and the SDK's
- * notation parser) send the tens face divided by ten as `value`, 10 for the
- * 00 face, with `value_to_display` "0", "10" … "90"; the SDK's theme face
- * list for d10x is [10, 20 … 90, 0], so value 10 lands on the 00 face. We
- * do exactly that (an icon face shows its label instead). 0.3.1 sent "00"
- * as the display, a string no theme lists, and the room showed 10 for it;
- * 0.3.2 matches dddice's "0", whether that shows 00 in the room is still
- * to be seen.
+ * `value`, `value_to_display`, `label`; `room`, `label`. For the tens die
+ * the API takes the face's own label as `value` (a theme lists d10x faces
+ * as 10, 20 … 90, 0), and that is what the 3D die lands on: 0.3.2 sent
+ * value 10 (the SDK's in-process convention, where value is a 1-10 index
+ * and 10 is the 00 face) and the room check (2026-10-26) landed the die on
+ * the face printed 10 while the roll text showed the display "0". So we
+ * send the label, 0 for the 00 face, and the same as the display; the
+ * server validates `value` against the theme's list ("Die with id: d10
+ * cannot roll value 80" was 0.3.0 sending 80 to a plain d10). An icon face
+ * shows its label instead.
  * DiceVision reports that die as a `d10` with a two-digit face (bridge
  * docs: `"00"` and `"0"` stay distinct by face), so the face, not the type,
  * says which d10 is the tens die; sending it as a plain d10 gets "Die with
@@ -96,13 +96,13 @@ const TENS_FACE = /^[0-9]0$/;
 
 /**
  * One die for dddice. DiceVision reports the percentile tens die as a `d10`
- * whose face is two digits ("00", "30"); that is dddice's `d10x`, value 1-10
- * (10 for "00") shown as dddice writes it ("0", "30"). A d10's "0" face is
- * its 10, shown as 10 the way dddice shows its own. An icon face keeps the
- * number it stands for and shows the icon's label. Throws on a
- * die dddice has no type for, or a tens die whose value isn't a multiple of
- * ten (a `d100`-typed die with a one-digit face), so the roll is reported
- * instead of sent as nonsense.
+ * whose face is two digits ("00", "30"); that is dddice's `d10x`, sent by
+ * its face label (0 for "00", 30), which is DiceVision's value for it, and
+ * shown the same way ("0", "30"). A d10's "0" face is its 10, shown as 10
+ * the way dddice shows its own. An icon face keeps the number it stands for
+ * and shows the icon's label. Throws on a die dddice has no type for, or a
+ * tens die whose value isn't 0, 10 … 90 (a `d100`-typed die with a
+ * one-digit face), so the roll is reported instead of sent as nonsense.
  */
 export function dddiceDie(die: PhysicalDie, theme: string): DddiceDie {
   let type = DDDICE_TYPE[die.type];
@@ -111,8 +111,8 @@ export function dddiceDie(die: PhysicalDie, theme: string): DddiceDie {
   let value = die.value;
   if (type === "d10" && TENS_FACE.test(die.face)) type = "d10x";
   if (type === "d10x") {
-    value = die.value === 0 ? 10 : die.value / 10;
-    if (!Number.isInteger(value) || value < 1 || value > 10) throw new Error(`"${die.face}" isn't a tens face`);
+    // The face label is the value: 0, 10 … 90 (DiceVision's value for a tens die already is)
+    if (!Number.isInteger(value) || value % 10 !== 0 || value < 0 || value > 90) throw new Error(`"${die.face}" isn't a tens face`);
   } else if (type === "d10" && value === 0) {
     value = 10; // no display override below: dddice shows that face as 10, its own convention
   }
@@ -121,8 +121,8 @@ export function dddiceDie(die: PhysicalDie, theme: string): DddiceDie {
     out.value_to_display = shown;
     out.label = die.icon.label;
   } else if (type === "d10x") {
-    // dddice's own form for the tens die: "0", "10" … "90" (its themes list the 00 face as 0)
-    out.value_to_display = String(value === 10 ? 0 : value * 10);
+    // Shown as dddice writes the tens die: "0", "10" … "90" (its themes list the 00 face as 0)
+    out.value_to_display = String(value);
   }
   return out;
 }

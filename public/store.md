@@ -7,14 +7,14 @@ icon: https://rodeo.dirtyowlbear.com/icon.png
 tags:
   - dice
 manifest: https://rodeo.dirtyowlbear.com/manifest.json
-learn-more: https://dicevision.dirtyowlbear.com
+learn-more: https://www.dirtyowlbear.com/
 ---
 
 # DiceVision
 
 Roll your real dice in front of a camera and the results show up in Owlbear Rodeo for the whole table.
 
-[DiceVision](https://dicevision.dirtyowlbear.com) reads physical dice with computer vision. This extension connects a DiceVision session to your room: when you roll, everyone with the extension sees what you rolled, as a notification and in the extension's roll log.
+[DiceVision](https://www.dirtyowlbear.com/) reads physical dice with computer vision. This extension connects a DiceVision session to your room: when you roll, everyone with the extension sees what you rolled, as a notification and in the extension's roll log.
 
 **Setup**
 
